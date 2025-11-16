@@ -100,4 +100,15 @@ namespace ctl{
         return subdirs;
     }
 
+
+    bool satInterfaceExist(const std::string& path) {
+        if (path.empty()) {
+            return false;
+        }
+        if (!ctl::pathExists(path)) {
+            return false;
+        }
+        return true;
+    }
+
 }

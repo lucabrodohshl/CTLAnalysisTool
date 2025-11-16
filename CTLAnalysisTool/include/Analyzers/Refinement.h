@@ -38,8 +38,6 @@ private:
     //bool use_parallel_analysis_ = true;
     bool use_syntactic_refinement_ = true;
     bool use_full_language_inclusion_ = false;  // New option for product-based approach
-    bool use_ctl_sat_ = false; // Use CTL-SAT for refinement checking
-    std::shared_ptr<CTLSATInterface> ctl_sat_interface_;
     //size_t threads_ = std::thread::hardware_concurrency();
     
 public:
@@ -64,18 +62,6 @@ public:
     void setFullLanguageInclusion(bool enabled) { use_full_language_inclusion_ = enabled; }
     //void setThreads(size_t threads) { threads_ = threads; }
     void setUseTransitiveOptimization(bool use_transitive);
-    void setUseCTLSAT(bool use_ctl_sat) { 
-        use_ctl_sat_ = use_ctl_sat; 
-    }
-    bool getUseCTLSAT() const { return use_ctl_sat_; }
-
-    void createCTLSATInterface(const std::string& ctl_sat_path="./extern/ctl-sat") {
-        ctl_sat_interface_ = std::make_shared<CTLSATInterface>(ctl_sat_path);
-    }
-
-    std::shared_ptr<CTLSATInterface> getCTLSATInterface() const {
-        return ctl_sat_interface_;
-    }
 
     // Main analysis methods
     AnalysisResult analyze() override;

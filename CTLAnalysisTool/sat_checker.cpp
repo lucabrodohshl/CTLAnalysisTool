@@ -23,9 +23,8 @@ void printUsage(const char* program_name) {
     std::cout << "  -j, --threads <n>    Number of threads to use\n";
     std::cout << "  -v, --verbose        Verbose output\n";
     std::cout << "  --no-parallel        Disable parallel analysis\n";
-    std::cout << "  --use-full-language-inclusion  Use full language inclusion for refinement checking\n";
-    std::cout << "  --use-extern-sat   Use external SAT interface for satisfiability checking\n";
-    std::cout << "  --sat-interface <interface>  Specify which external SAT interface to use (CTLSAT, MOMOCTL, MLSOLVER)\n";
+    std::cout << "  --use-extern-sat <interface>  Specify which external SAT interface to use (CTLSAT, MOMOCTL, MLSOLVER)\n";
+    std::cout << "  --sat-at <path>      Specify the path to the external SAT solver\n";
     std::cout << "\n";
     std::cout << "Input can be either a .txt file or a folder containing .txt files.\n";
     std::cout << "If a folder is provided, all .txt files will be processed.\n";
@@ -37,15 +36,6 @@ void printUsage(const char* program_name) {
 
 
 
-bool satInterfaceExist(const std::string& path) {
-    if (path.empty()) {
-        return false;
-    }
-    if (!ctl::pathExists(path)) {
-        return false;
-    }
-    return true;
-}
 
 int main(int argc, char* argv[]) {
     std::string input_file;
@@ -84,7 +74,6 @@ int main(int argc, char* argv[]) {
             }
         } else if (arg == "--use-extern-sat") {
             use_extern_sat = true;
-        }else if (arg == "--sat-interface") {
             if (i + 1 < argc) {
                 std::string interface_str = argv[++i];
                 if (interface_str == "CTLSAT") {
@@ -105,7 +94,7 @@ int main(int argc, char* argv[]) {
             if (i + 1 < argc) {
                 sat_path = argv[++i];
             } else {
-                std::cerr << "Error: --sat-path option requires an argument\n";
+                std::cerr << "Error: --sat-at option requires an argument\n";
                 return 1;
             }
         } else if (arg == "-v" || arg == "--verbose") {
@@ -119,7 +108,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (use_extern_sat && (sat_interface == ctl::AvailableCTLSATInterfaces::NONE || !satInterfaceExist(sat_path))) {
+    if (use_extern_sat && (sat_interface == ctl::AvailableCTLSATInterfaces::NONE || !ctl::satInterfaceExist(sat_path))) {
         std::cerr << "Error: No External SAT interface type specified or sat path does not exist.\n";
         return 1;
     }

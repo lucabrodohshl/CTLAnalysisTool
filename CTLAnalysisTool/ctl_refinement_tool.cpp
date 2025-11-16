@@ -12,7 +12,7 @@
 #include "synthetic_benchmark.h"
 #include "ExternalCTLSAT/ctl_sat.h"
 #include "utils.h"
-
+#include "types.h"
 
 void printUsage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options] <input_file_or_folder>\n";
@@ -29,8 +29,8 @@ void printUsage(const char* program_name) {
     std::cout << "  --semantic           Use semantic refinement (ABTA-based)\n";
     std::cout << "  --use-full-language-inclusion  Use full language inclusion for refinement checking\n";
     std::cout << "  --use-simulation      Use simulation for refinement checking\n";
-    std::cout << "  --use-ctl-sat        Use CTL-SAT for refinement checking\n";
-    std::cout << "  --ctl-sat-path <path>  Path to CTL-SAT executable (default: ./extern/ctl-sat)\n";
+    std::cout << "  --use-extern-sat <interface>  Specify which external SAT interface to use (CTLSAT, MOMOCTL, MLSOLVER)\n";
+    std::cout << "  --sat-path <path>  Specify the path to the external SAT solver\n";
     std::cout << "\n";
     std::cout << "Input can be either a .txt file or a folder containing .txt files.\n";
     std::cout << "If a folder is provided, all .txt files will be processed.\n";
@@ -48,15 +48,16 @@ int main(int argc, char* argv[]) {
     bool use_transitive = true;  
     bool use_language_inclusion = true;
     size_t num_threads = std::thread::hardware_concurrency();
+    ctl::AvailableCTLSATInterfaces sat_interface = ctl::AvailableCTLSATInterfaces::CTLSAT;
     bool verbose = false;
-    bool use_ctl_sat_ = false;
+    bool use_extern_sat = false;
     
     // Benchmark mode variables
     bool benchmark_mode = false;
     ctl::BenchmarkConfig benchmark_config;
     std::string input_csv;
     std::string output_csv = "benchmark_results.csv";
-    std::string ctl_sat_path = "./extern/ctl-sat";
+    std::string sat_path = "./extern/ctl-sat";
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -85,14 +86,29 @@ int main(int argc, char* argv[]) {
             use_language_inclusion = true;
         } else if (arg == "--use-simulation") {
             use_language_inclusion = false;
-        } else if (arg == "--use-ctl-sat") {
-            // Enable CTL-SAT usage
-            use_ctl_sat_ = true;
-        } else if (arg == "--ctl-sat-path") {
-            // if use_ctl_sat_ is set, this is required 
+        } else if (arg == "--use-extern-sat") {
+            use_extern_sat = true;
             if (i + 1 < argc) {
-                ctl_sat_path = argv[++i];
-                use_ctl_sat_ = true;
+                std::string interface_str = argv[++i];
+                if (interface_str == "CTLSAT") {
+                    sat_interface = ctl::AvailableCTLSATInterfaces::CTLSAT;
+                } else if (interface_str == "MOMOCTL") {
+                    sat_interface = ctl::AvailableCTLSATInterfaces::MOMOCTL;
+                } else if (interface_str == "MLSOLVER") {
+                    sat_interface = ctl::AvailableCTLSATInterfaces::MLSOLVER;
+                } else {
+                    std::cerr << "Error: Unknown SAT interface: " << interface_str << "\n";
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --sat-interface option requires an argument\n";
+                return 1;
+            }
+        } else if (arg == "--sat-path") {
+            // if use_extern_sat is set, this is required 
+            if (i + 1 < argc) {
+                sat_path = argv[++i];
+                use_extern_sat = true;
             } else {
                 std::cerr << "Error: --ctl-sat-path option requires an argument\n";
                 return 1;
@@ -106,60 +122,6 @@ int main(int argc, char* argv[]) {
             }
         } else if (arg == "-v" || arg == "--verbose") {
             verbose = true;
-        //} else if (arg == "--benchmark") {
-        //    benchmark_mode = true;
-        //} else if (arg == "--states") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.num_states = std::stoi(argv[++i]);
-        //    }
-        //} else if (arg == "--transitions") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.num_transitions = std::stoi(argv[++i]);
-        //    }
-        //} else if (arg == "--atomic-props") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.num_atomic_props = std::stoi(argv[++i]);
-        //    }
-        //} else if (arg == "--base-props") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.base_props = std::stoi(argv[++i]);
-        //    }
-        //} else if (arg == "--refined-props") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.refined_props = std::stoi(argv[++i]);
-        //    }
-        //} else if (arg == "--classes") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.num_classes = std::stoi(argv[++i]);
-        //    }
-        //} else if (arg == "--chain-states") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.chain_states = std::stoi(argv[++i]);
-        //    }
-        //} else if (arg == "--bit-width") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.bit_width = std::stoi(argv[++i]);
-        //    }
-        //} else if (arg == "--nusmv-path") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.nusmv_path = argv[++i];
-        //    }
-        //} else if (arg == "--ctl-sat-path") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.ctl_sat_path = argv[++i];
-        //    }
-        //} else if (arg == "--input-csv") {
-        //    if (i + 1 < argc) {
-        //        input_csv = argv[++i];
-        //    }
-        //} else if (arg == "--output-csv") {
-        //    if (i + 1 < argc) {
-        //        output_csv = argv[++i];
-        //    }
-        //} else if (arg == "--seed") {
-        //    if (i + 1 < argc) {
-        //        benchmark_config.seed = std::stoul(argv[++i]);
-        //    }
         } else if (arg[0] != '-') {
             input_file = arg;
         } else {
@@ -168,35 +130,10 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-    
-    // Handle benchmark mode
-    //if (benchmark_mode) {
-    //    try {
-    //        benchmark_config.output_dir = output_dir;
-    //        ctl::SyntheticBenchmarkRunner runner(benchmark_config);
-    //        
-    //        std::vector<ctl::BenchmarkResult> results;
-    //        
-    //        if (!input_csv.empty()) {
-    //            // Run benchmark suite from CSV
-    //            std::cout << "Running benchmark suite from: " << input_csv << "\n";
-    //            results = runner.runBenchmarkSuite(input_csv);
-    //        } else {
-    //            // Run single benchmark
-    //            std::cout << "Running single synthetic benchmark...\n";
-    //            results.push_back(runner.runBenchmark(0));
-    //        }
-    //        
-    //        // Save results
-    //        runner.saveResults(results, output_csv);
-    //        std::cout << "Benchmark completed successfully!\n";
-    //        return 0;
-    //        
-    //    } catch (const std::exception& e) {
-    //        std::cerr << "Benchmark error: " << e.what() << "\n";
-    //        return 1;
-    //    }
-    //}
+    if (use_extern_sat && (sat_interface == ctl::AvailableCTLSATInterfaces::NONE || !ctl::satInterfaceExist(sat_path))) {
+        std::cerr << "Error: No External SAT interface type specified or sat path does not exist.\n";
+        return 1;
+    }
     
     if (input_file.empty()) {
         std::cerr << "Error: No input file or folder specified\n";
@@ -260,7 +197,11 @@ int main(int argc, char* argv[]) {
             std::cout << "Parallel analysis: " << (use_parallel ? "Enabled" : "Disabled") << "\n";
             std::cout << "Transitive optimization: " << (use_transitive ? "Enabled" : "Disabled") << "\n";
             std::cout << "Full language inclusion: " << (use_language_inclusion ? "Enabled" : "Disabled") << "\n";
-            std::cout << "CTL-SAT usage: " << (use_ctl_sat_ ? "Enabled" : "Disabled") << "\n";
+            std::cout << "Using method: " << (use_extern_sat ? "External SAT" : "Automaton Based") << "\n";
+            if (use_extern_sat){
+                std::cout << "  Interface: " << ctl::AvailableCTLSATInterfacesToString(sat_interface) << std::endl;
+                std::cout << "  Interface Path: " << sat_path << std::endl;
+            }
             if (use_parallel) {
                 std::cout << "Number of threads: " << num_threads << "\n";
             }
@@ -297,8 +238,13 @@ int main(int argc, char* argv[]) {
             analyzer.setThreads(num_threads);
             analyzer.setUseTransitiveOptimization(use_transitive);
             analyzer.setFullLanguageInclusion(use_language_inclusion);
-            analyzer.setUseCTLSAT(use_ctl_sat_);
-            analyzer.createCTLSATInterface(ctl_sat_path);
+
+            //analyzer.setUseCTLSAT(use_extern_sat);
+            //analyzer.createCTLSATInterface(sat_path);
+            if (use_extern_sat) {
+                analyzer.setExternalSATInterface(sat_interface, sat_path);
+            }
+            analyzer.setVerbose(verbose);
             if (verbose) {
                 //std::cout << "Loaded " << analyzer->getProperties().size() << " properties\n";
                 std::cout << "Starting analysis...\n";

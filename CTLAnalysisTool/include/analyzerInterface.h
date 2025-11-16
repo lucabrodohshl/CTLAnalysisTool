@@ -19,18 +19,34 @@ namespace ctl{
                 external_sat_interface_set_ = true;
                 external_sat_interface_ = ExternalSatFactory::createExternalSATInterface(interface_type, sat_path);
             }
+            //return reference to pointer to external sat interface
+            const ExternalCTLSATInterface* getExternalSATInterface() const {
+                if (!external_sat_interface_set_) {
+                    return nullptr;
+                }
+                return external_sat_interface_.get();
+            }
+            void setVerbose(bool verbose) { 
+                verbose_ = verbose; 
+                if (external_sat_interface_) {
+                    external_sat_interface_->setVerbose(verbose);
+                }
+                for (auto& property : properties_) {
+                    property->setVerbose(verbose);
+                }
+            }
+            bool isVerbose() const { return verbose_; }
+
 
 
     protected:
-
-
 
         void __initialize_properties(const std::vector<std::string>& property_strings)
         {
             properties_.reserve(property_strings.size());
             for (const auto& prop_str : property_strings) {
                 try {
-                    properties_.push_back(CTLProperty::create(prop_str));
+                    properties_.push_back(CTLProperty::create(prop_str, verbose_));
                 } catch (const std::exception& e) {
                     std::cerr << "Warning: Failed to parse property '" << prop_str 
                               << "': " << e.what() << std::endl;
@@ -41,6 +57,7 @@ namespace ctl{
 
         bool use_parallel_analysis_ = true;
         bool external_sat_interface_set_ = false;
+        bool verbose_ = false;
         size_t threads_ = std::thread::hardware_concurrency();
         std::unique_ptr<ExternalCTLSATInterface> external_sat_interface_;
         std::vector<std::shared_ptr<CTLProperty>> properties_;

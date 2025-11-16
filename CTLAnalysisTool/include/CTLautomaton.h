@@ -28,7 +28,7 @@ namespace ctl {
 class CTLAutomaton {
 public:
     CTLAutomaton() = default;
-    explicit CTLAutomaton(const CTLFormula& formula);
+    explicit CTLAutomaton(const CTLFormula& formula, bool verbose = false);
     
     CTLAutomaton(const CTLAutomaton& other);
     CTLAutomaton& operator=(const CTLAutomaton& other);
@@ -91,17 +91,19 @@ public:
     std::vector<Move> getMoves(std::string_view q, std::unordered_map<std::string_view, std::vector<Move>>& moves_cache) const {
         return __getMovesInternal(q, moves_cache);
     }
+    bool verbose() const { return verbose_; }
+    void setVerbose(bool v) { verbose_ = v; }
 private:
     CTLFormulaPtr p_original_formula_;
     CTLFormulaPtr p_negated_formula_;
     std::string s_raw_formula_;
-
     std::vector<CTLStatePtr> v_states_;
     std::vector<CTLStatePtr> v_removed_states_;
     std::string_view initial_state_;
     std::unordered_map<std::string_view, std::unordered_set<std::string_view>> state_successors_;
     std::unordered_map<std::string_view, std::vector<CTLTransitionPtr>> m_transitions_;
     std::unordered_map<std::string_view, BinaryOperator> m_state_operator_;
+    bool verbose_ = false;
     mutable std::unordered_map<std::string_view, std::vector<Move>> m_expanded_transitions_;
     mutable std::unique_ptr<SCCBlocks> blocks_;
     mutable std::unordered_set<std::string_view> s_accepting_states_;

@@ -84,7 +84,7 @@ void RefinementAnalyzer::clearInstanceCaches() {
     result_per_property_.clear();
     
     // Clear CTL-SAT interface (releases Z3 resources if using Z3 backend)
-    ctl_sat_interface_.reset();
+    external_sat_interface_.reset();
     
     // Note: All Z3 resources (contexts, solvers) are managed via unique_ptr
     // and will be automatically freed when their owning objects are destroyed.

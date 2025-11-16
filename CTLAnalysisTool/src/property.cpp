@@ -24,20 +24,22 @@ CTLProperty::CTLProperty(CTLFormulaPtr formula) : formula_(std::move(formula)) {
 }
 
 // Factory methods with caching
-std::shared_ptr<CTLProperty> CTLProperty::create(const std::string& formula_str) {
+std::shared_ptr<CTLProperty> CTLProperty::create(const std::string& formula_str, bool verbose) {
     auto it = property_cache_.find(formula_str);
     if (it != property_cache_.end()) {
         return it->second;
     }
     
     auto property = std::shared_ptr<CTLProperty>(new CTLProperty(formula_str));
+    property->setVerbose(verbose);
     property_cache_[formula_str] = property;
     return property;
 }
 
-std::shared_ptr<CTLProperty> CTLProperty::create(CTLFormulaPtr formula) {
+std::shared_ptr<CTLProperty> CTLProperty::create(CTLFormulaPtr formula, bool verbose) {
     std::string formula_str = formula->toString();
-    return create(formula_str);
+
+    return create(formula_str, verbose);
 }
 
 void CTLProperty::clearStaticCaches() {
@@ -75,8 +77,7 @@ const std::unordered_set<std::string>& CTLProperty::getAtomicPropositions() cons
 const CTLAutomaton& CTLProperty::automaton() const {
 
     if (!automaton_) {
-
-        automaton_ = std::make_shared<CTLAutomaton>(*formula_);
+        automaton_ = std::make_shared<CTLAutomaton>(*formula_, verbose_);
     }
     return *automaton_;
 }
@@ -139,6 +140,9 @@ bool CTLProperty::refinesSemantic(const CTLProperty& other, bool use_full_inclus
         //std::cout << "Checking language inclusion L(this) ⊆ L(other).\n";
         //std::cout << "This property formula: " << this->toString() << "\n";
         //std::cout << "Other property formula: " << other.toString() << "\n";
+        if (verbose_) {
+            std::cout << "Checking if " << this->toString() << " ⊆ " << other.toString() << "\n";
+        }
         return other.automaton().languageIncludes(automaton());
         
     }

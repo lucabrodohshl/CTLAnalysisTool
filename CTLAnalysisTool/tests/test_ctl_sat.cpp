@@ -37,10 +37,11 @@ int main(int argc, char* argv[]) {
 
         // Initialize analyzer
         auto analyzer = ctl::RefinementAnalyzer(input_file);
-        analyzer.setUseCTLSAT(true);
-        analyzer.createCTLSATInterface(ctl_sat_path);
+        //analyzer.setUseCTLSAT(true);
+        //analyzer.createCTLSATInterface(ctl_sat_path);
         analyzer.setParallelAnalysis(true);
-        analyzer.getCTLSATInterface()->setVerbose(true);
+        analyzer.setExternalSATInterface(ctl::AvailableCTLSATInterfaces::CTLSAT, ctl_sat_path);
+        analyzer.setVerbose(true);
         
 
         // Run analysis

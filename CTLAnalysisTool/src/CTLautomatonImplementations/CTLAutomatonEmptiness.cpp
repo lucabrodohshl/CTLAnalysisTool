@@ -8,6 +8,7 @@ namespace ctl {
 
     
       bool CTLAutomaton::isEmpty() const {
+        if (verbose_) std::cout << "Checking emptiness of formula: " << getRawFormula() << "\n";
         if (this->getFormula()->hash() == FALSE_HASH) return true;
         if (this->getFormula()->hash() == TRUE_HASH)  return false;
 

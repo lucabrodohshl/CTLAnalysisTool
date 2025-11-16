@@ -9,6 +9,7 @@
 #include <atomic>
 #include <mutex>
 #include <numeric>
+#include <iomanip>
 
 namespace ctl {
 
@@ -32,37 +33,7 @@ AnalysisResult RefinementAnalyzer::analyze() {
         std::cout << "Checking and removing unsatisfiable properties serially...\n";
         _checkAndRemoveUnsatisfiableProperties();
     }
-    
-    //if (!use_ctl_sat_){
-    //    //create all the abtas before hand. If the abta is empty, we remove the property!
-    //    for (auto it = properties_.begin(); it != properties_.end(); ) {
-    //        it->get()->simplify();
-    //        if(it->get()->isEmpty()) {
-    //            std::cerr << "Property " << it->get()->toString() << " has an empty ABTA and will be removed from analysis.\n";
-    //            false_properties_strings_.push_back(it->get()->toString());
-    //            false_properties_index_.push_back(std::distance(properties_.begin(), it));
-    //            it = properties_.erase(it); // Remove property if ABTA creation fails
-    //            result.false_properties++;
-    //        } else {
-    //            ++it; // Move to next property
-    //        }
-    //    }
-    //}else{
-//
-    //    for (auto it = properties_.begin(); it != properties_.end(); ) {
-    //        // Use CTL-SAT to check for unsatisfiability
-    //        bool is_unsat = ctl_sat_interface_->isSatisfiable(it->get()->toString(),true) == false;
-    //        if (is_unsat) {
-    //            std::cerr << "Property " << it->get()->toString() << " is unsatisfiable according to CTL-SAT and will be removed from analysis.\n";
-    //            false_properties_strings_.push_back(it->get()->toString());
-    //            false_properties_index_.push_back(std::distance(properties_.begin(), it));
-    //            it = properties_.erase(it); // Remove property if unsatisfiable
-    //            result.false_properties++;
-    //        } else {
-    //            ++it; // Move to next property
-    //        }
-    //    }
-    //}
+
     
     result.false_properties = false_properties_strings_.size();
     // Build equivalence classes
@@ -279,33 +250,24 @@ void RefinementAnalyzer::_analyzeRefinementClassSerial(size_t class_index, bool 
 
 PropertyResult RefinementAnalyzer::checkRefinement(const CTLProperty& prop1, const CTLProperty& prop2) const {
     auto mem_before = memory_utils::getCurrentMemoryUsage();
-    if (!use_ctl_sat_) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+    bool res;
+    if (!external_sat_interface_set_) {
         // Use existing refinement methods
-        auto start_time = std::chrono::high_resolution_clock::now();
-        bool res= prop1.refines(prop2, use_syntactic_refinement_, use_full_language_inclusion_);
-        auto end_time = std::chrono::high_resolution_clock::now();
-         auto mem_after = memory_utils::getCurrentMemoryUsage();
-        size_t mem_delta = (mem_after.resident_memory_kb > mem_before.resident_memory_kb) 
-                          ? (mem_after.resident_memory_kb - mem_before.resident_memory_kb) 
-                          : 0;
-        return {res, 
-                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time),
-                0, 0, mem_delta};
+        res = prop1.refines(prop2, use_syntactic_refinement_, use_full_language_inclusion_);
     } else {
         // Use CTL-SAT for refinement checking
-        std::cout << "Checking for refinement using CTLSAT";
-        auto start_time = std::chrono::high_resolution_clock::now();
-        bool res = ctl_sat_interface_->refines(prop1.toString(), prop2.toString());
-        auto end_time = std::chrono::high_resolution_clock::now();
-        auto mem_after = memory_utils::getCurrentMemoryUsage();
-        size_t mem_delta = (mem_after.resident_memory_kb > mem_before.resident_memory_kb)
-                          ? (mem_after.resident_memory_kb - mem_before.resident_memory_kb)
-                          : 0;
-        
-        return {res,
-                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time),
-                0, 0, mem_delta};
+        res = prop1.refines(prop2, *external_sat_interface_);
     }
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto mem_after = memory_utils::getCurrentMemoryUsage();
+    size_t mem_delta = (mem_after.resident_memory_kb > mem_before.resident_memory_kb) 
+                      ? (mem_after.resident_memory_kb - mem_before.resident_memory_kb) 
+                      : 0;
+    return {res, 
+            std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time),
+            0, 0, mem_delta};
+
 }
 
 void RefinementAnalyzer::analyzeRefinementClassParallel() {
@@ -506,35 +468,58 @@ RefinementGraph RefinementAnalyzer::_analyzeClassTaskOptimized(const std::vector
 
 
     void RefinementAnalyzer::_checkAndRemoveUnsatisfiableProperties() {
-        if (!use_ctl_sat_){
-            //create all the abtas before hand. If the abta is empty, we remove the property!
-            for (auto it = properties_.begin(); it != properties_.end(); ) {
-                it->get()->simplify();
-                if(it->get()->isEmpty()) {
-                    std::cerr << "Property " << it->get()->toString() << " has an empty ABTA and will be removed from analysis.\n";
-                    false_properties_strings_.push_back(it->get()->toString());
-                    false_properties_index_.push_back(std::distance(properties_.begin(), it));
-                    it = properties_.erase(it); // Remove property if ABTA creation fails
-                } else {
-                    ++it; // Move to next property
-                }
-            }
-        }else{
 
-            for (auto it = properties_.begin(); it != properties_.end(); ) {
+        for (auto it = properties_.begin(); it != properties_.end(); ) {
+            bool is_false = false;
+
+            if (!external_sat_interface_) {
+                // Simplify and check if ABTA is empty
+                (*it)->simplify();
+                is_false = (*it)->isEmpty();
+            } else {
                 // Use CTL-SAT to check for unsatisfiability
-                std::cout << "Checking property for unsatisfiability using CTL-SAT: " << it->get()->toString() << std::endl;
-                bool is_unsat = ctl_sat_interface_->isSatisfiable(it->get()->toString(),true) == false;
-                if (is_unsat) {
-                    std::cerr << "Property " << it->get()->toString() << " is unsatisfiable according to CTL-SAT and will be removed from analysis.\n";
-                    false_properties_strings_.push_back(it->get()->toString());
-                    false_properties_index_.push_back(std::distance(properties_.begin(), it));
-                    it = properties_.erase(it); // Remove property if unsatisfiable
-                } else {
-                    ++it; // Move to next property
-                }
+                is_false = !(*it)->isSatisfiable(*external_sat_interface_);//!ctl_sat_interface_->isSatisfiable((*it)->toString(), true);
+            }
+
+            if (is_false) {
+                std::cerr << "Property " << (*it)->toString() << " is unsatisfiable and will be removed from analysis.\n";
+                false_properties_strings_.push_back((*it)->toString());
+                false_properties_index_.push_back(std::distance(properties_.begin(), it));
+                it = properties_.erase(it); // Remove property if unsatisfiable
+            } else {
+                ++it; // Move to next property
             }
         }
+
+        //if (!use_ctl_sat_){
+        //    //create all the abtas before hand. If the abta is empty, we remove the property!
+        //    for (auto it = properties_.begin(); it != properties_.end(); ) {
+        //        it->get()->simplify();
+        //        if(it->get()->isEmpty()) {
+        //            std::cerr << "Property " << it->get()->toString() << " has an empty ABTA and will be removed from analysis.\n";
+        //            false_properties_strings_.push_back(it->get()->toString());
+        //            false_properties_index_.push_back(std::distance(properties_.begin(), it));
+        //            it = properties_.erase(it); // Remove property if ABTA creation fails
+        //        } else {
+        //            ++it; // Move to next property
+        //        }
+        //    }
+        //}else{
+//
+        //    for (auto it = properties_.begin(); it != properties_.end(); ) {
+        //        // Use CTL-SAT to check for unsatisfiability
+        //        std::cout << "Checking property for unsatisfiability using CTL-SAT: " << it->get()->toString() << std::endl;
+        //        bool is_unsat = ctl_sat_interface_->isSatisfiable(it->get()->toString(),true) == false;
+        //        if (is_unsat) {
+        //            std::cerr << "Property " << it->get()->toString() << " is unsatisfiable according to CTL-SAT and will be removed from analysis.\n";
+        //            false_properties_strings_.push_back(it->get()->toString());
+        //            false_properties_index_.push_back(std::distance(properties_.begin(), it));
+        //            it = properties_.erase(it); // Remove property if unsatisfiable
+        //        } else {
+        //            ++it; // Move to next property
+        //        }
+        //    }
+        //}
     }
 
 
@@ -553,13 +538,13 @@ RefinementGraph RefinementAnalyzer::_analyzeClassTaskOptimized(const std::vector
                 for (size_t i = t; i < n; i += threads_) {
                     bool is_false = false;
                     
-                    if (!use_ctl_sat_) {
+                    if (!external_sat_interface_set_) {
                         // Simplify and check if ABTA is empty
                         properties_[i]->simplify();
                         is_false = properties_[i]->isEmpty();
                     } else {
                         // Use CTL-SAT to check for unsatisfiability
-                        is_false = !ctl_sat_interface_->isSatisfiable(properties_[i]->toString(), true);
+                        properties_[i]->isEmpty(*external_sat_interface_);
                     }
                     
                     if (is_false) {

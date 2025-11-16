@@ -17,7 +17,7 @@ CTLSATInterface::CTLSATInterface(const std::string& ctl_sat_path)
      }
 
 std::string CTLSATInterface::runCTLSAT(const std::string& formula) const {
-    std::cout << "Running: "<< formula << "\n";
+    if (verbose_) std::cout << "Running: "<< formula << "\n";
     std::string command = sat_path_ + " \"" + formula + "\"";
     std::array<char, 2048*4> buffer;
     std::string result;

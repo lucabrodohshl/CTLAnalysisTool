@@ -7,14 +7,16 @@ const size_t CTLAutomaton::TRUE_HASH = BooleanLiteral(true).hash();
 const size_t CTLAutomaton::FALSE_HASH = BooleanLiteral(false).hash();
 
 // Constructor from CTL formula
-CTLAutomaton::CTLAutomaton(const CTLFormula& formula) {
+CTLAutomaton::CTLAutomaton(const CTLFormula& formula, bool verbose) : verbose_(verbose) {
     buildFromFormula(formula);
+
 };
 
 CTLAutomaton::CTLAutomaton(const CTLAutomaton& other) {
     // Copy constructor implementation (deep copy if necessary)
     p_original_formula_ = other.p_original_formula_->clone();
     p_negated_formula_ = other.p_negated_formula_->clone();
+    verbose_ = other.verbose_;
 }
 
 

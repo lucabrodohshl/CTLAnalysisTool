@@ -11,7 +11,9 @@
 namespace ctl {
 
   void CTLAutomaton::buildFromFormula(const CTLFormula& formula, bool symbolic) {
+    if (verbose_) std::cout << "Building automaton from formula: " << formula.toString() << "\n";
     p_original_formula_ = std::move(formula_utils::preprocessFormula(formula));
+    if (verbose_) std::cout << "Converted formula: " << p_original_formula_->toString() << "\n";
     p_negated_formula_ = std::move(formula_utils::negateFormula(formula));
     smt_interface_ = createDefaultSMTInterface();
     __buildFromFormula( false);

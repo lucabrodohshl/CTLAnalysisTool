@@ -25,6 +25,7 @@ std::vector<std::string> getTextFilesInDirectory(const std::string& dir_path);
 std::vector<std::string> loadPropertiesFromFile(const std::string& filename);
 std::string joinPaths(const std::string& path1, const std::string& path2);
 std::vector<std::string> getSubdirectoriesInDirectory(const std::string& dir_path);
+bool satInterfaceExist(const std::string& path);
 } // namespace ctl
 
 

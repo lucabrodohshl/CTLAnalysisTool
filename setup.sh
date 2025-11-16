@@ -1,5 +1,5 @@
- apt update
- apt install build-essential cmake libz3-dev libstdc++6
+sudo apt update
+sudo apt install build-essential cmake libz3-dev libstdc++6
 
 
 

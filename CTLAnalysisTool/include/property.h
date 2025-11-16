@@ -29,6 +29,7 @@ struct CTLFormulaEqual {
 class CTLProperty {
 private:
     CTLFormulaPtr formula_;
+    bool verbose_ = false;
     mutable std::shared_ptr<CTLAutomaton> automaton_; // Lazy initialization
     mutable std::unordered_set<std::string> atomic_props_; // Cache
     mutable bool atomic_props_computed_ = false;
@@ -45,8 +46,8 @@ public:
     ~CTLProperty() = default; // Let shared_ptr handle cleanup automatically
     
     // Factory method with caching
-    static std::shared_ptr<CTLProperty> create(const std::string& formula_str);
-    static std::shared_ptr<CTLProperty> create(CTLFormulaPtr formula);
+    static std::shared_ptr<CTLProperty> create(const std::string& formula_str, bool verbose = false);
+    static std::shared_ptr<CTLProperty> create(CTLFormulaPtr formula, bool verbose = false);
     
     // Memory management
     static void clearStaticCaches();
@@ -80,11 +81,18 @@ public:
         return !isEmpty();
     }
     
+    bool verbose() const { return verbose_; }
+    void setVerbose(bool v) { verbose_ = v; }
     // Refinement checking
     bool refines(const CTLProperty& other, bool use_syntactic = true, bool use_full_inclusion = false) const;
     bool refinesSyntactic(const CTLProperty& other) const;
     bool refinesSemantic(const CTLProperty& other, bool use_full_inclusion = false) const;
     
+
+    bool refines(const CTLProperty& other, const ExternalCTLSATInterface& sat_interface) const {
+        return sat_interface.refines(this->toString(), other.toString());
+    }
+
     // Equality and hashing
     bool equals(const CTLProperty& other) const;
     size_t hash() const;
