@@ -126,6 +126,11 @@ add_executable(test_ctlsat_parser tests/test_ctlsat_parser.cpp)
 target_link_libraries(test_ctlsat_parser ctl_refine_lib GTest::gtest GTest::gtest_main)
 add_test(NAME ctlsat_parser_tests COMMAND test_ctlsat_parser)
 
+# Add test executable for MLSolver parser
+add_executable(test_mlsolver_parser tests/test_mlsolver_parser.cpp)
+target_link_libraries(test_mlsolver_parser ctl_refine_lib GTest::gtest GTest::gtest_main)
+add_test(NAME mlsolver_parser_tests COMMAND test_mlsolver_parser)
+
 add_executable(test_abta tests/test_abta.cpp)
 target_link_libraries(test_abta ctl_refine_lib)
 add_test(NAME test_abta COMMAND test_abta)

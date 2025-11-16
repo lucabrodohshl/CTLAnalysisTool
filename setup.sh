@@ -4,6 +4,7 @@ sudo apt install build-essential cmake libz3-dev libstdc++6
 
 
 
+
 # if not already present, clone CTL sat and build it
 if [ ! -d "assets/extern/CTLSAT" ]; then
     # create extern directory if it does not exist
@@ -16,6 +17,21 @@ if [ ! -d "assets/extern/CTLSAT" ]; then
     cp ctl-sat ../ctl-sat
     cd ../../..
 fi
+
+
+if [ ! -d "assets/extern/mlsolver" ]; then
+    # create extern directory if it does not exist
+    mkdir -p assets/extern/
+    cd assets/extern/
+    git clone https://github.com/tcsprojects/mlsolver.git
+    cd mlsolver || { echo "Failed to enter mlsolver directory."; exit 1; }
+    pwd
+    dune build
+    cp _build/default/src/apps/mlsolver/mlsolver.exe ../mlsolver-sat
+    cd ../../..
+    #cp assets/extern/mlsolver/mlsolver.exe ./assets/extern/mlsolver_sat
+fi
+
 #
 #
 #if [ ! -d "assets/extern/cvc5" ]; then
@@ -50,8 +66,19 @@ cp ./collect_formula_info ../../scripts/collect_formula_info
 cd ../..
 
 
+
+
+
+
 # to run benchmarks, needs to be set up
 # if input is full, then it will also download the dataset
 if [ "$1" == "full" ]; then
+
+    
+
+
     bash ./setup_benchmarks.sh
 fi
+
+
+

@@ -1,4 +1,4 @@
-#include "ctlsat_parser.h"
+#include "sat_parsers/ctlsat_parser.h"
 #include "parser.h"
 #include <sstream>
 

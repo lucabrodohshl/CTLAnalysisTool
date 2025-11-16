@@ -1,4 +1,4 @@
-#include "ExternalCTLSAT/ctl_sat.h"
+#include "ExternalCTLSAT/mlsolver_sat.h"
 #include <cstdlib>
 #include <sstream>
 #include <stdexcept>
@@ -7,48 +7,51 @@
 #include <regex>
 #include <algorithm>
 
-#include "ctlsat_parser.h"
+#include "sat_parsers/ctlsat_parser.h"
 
 namespace ctl {
 
-CTLSATInterface::CTLSATInterface(const std::string& ctl_sat_path) 
+MLSolverInterface::MLSolverInterface(const std::string& mlsolver_sat_path) 
     {
-    sat_path_ = ctl_sat_path;
+    sat_path_ = mlsolver_sat_path;
      }
 
-std::string CTLSATInterface::runCTLSAT(const std::string& formula) const {
+std::string MLSolverInterface::runMLSolver(const std::string& formula) const {
     if (verbose_) std::cout << "Running: "<< formula << "\n";
-    std::string command = sat_path_ + " \"" + formula + "\"";
+    // MLSolver outputs to stderr, so redirect stderr to stdout
+    std::string command = sat_path_ + " --satisfiability ctl \"" + formula + "\" --pgsolver recursive 2>&1";
+    if (verbose_) std::cout << "Command: " << command << "\n";
     std::array<char, 2048*4> buffer;
     std::string result;
     
     std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
     if (!pipe) {
-        throw std::runtime_error("Failed to run CTL-SAT command: " + command);
+        throw std::runtime_error("Failed to run MLSolver command: " + command);
     }
     
     while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
         result += buffer.data();
     }
-    //std::cout << "Result: "<< result << "\n";
     
     return result;
 }
 
-bool CTLSATInterface::isSatisfiable(const std::string& formula, bool with_clearing) const {
-    if (with_clearing) CTLSATParser::clearComparisonMapping();
+bool MLSolverInterface::isSatisfiable(const std::string& formula, bool with_clearing) const {
+    if (with_clearing) MLSolverParser::clearComparisonMapping();
     try {
-        //std::cout << "checking for " << formula << "\n";
+        std::cout << "checking for " << formula << "\n";
         if(verbose_) std::cout << "Satisfiability check for formula: " << formula << "\n";
-        std::string ctl_sat_formula = toCTLSATSyntax(formula);
-        std::string output = runCTLSAT(ctl_sat_formula);
+        std::string mlsolver_formula = toMLSolverFormat(formula);
+        std::cout << "Converted formula: " << mlsolver_formula << "\n";
+        std::string output = runMLSolver(mlsolver_formula);
+
         //std::cout << "Output: " << output << "\n" << std::endl;
         // CTL-SAT returns "SAT" for satisfiable, "UNSAT" for unsatisfiable
         //std::cout << (output.find("Input formula is satisfable") != std::string::npos); //&& output.find("UNSAT") == std::string::npos;
         //std::cout << output;
-        if (output.find("Input formula is satisfable") != std::string::npos) {
+        if (output.find("Formula is satisfiable!") != std::string::npos) {
             return true;
-        } else if (output.find("Input formula is NOT satisfable") != std::string::npos) {
+        } else if (output.find("Formula is unsatisfiable!") != std::string::npos) {
             return false;
         }
         throw std::runtime_error("Unexpected CTL-SAT output: " + output);
@@ -60,9 +63,9 @@ bool CTLSATInterface::isSatisfiable(const std::string& formula, bool with_cleari
 
 
 // WE CHECK FOR RefinesPlus
-bool CTLSATInterface::refines(const std::string& formula1, const std::string& formula2) const {
+bool MLSolverInterface::refines(const std::string& formula1, const std::string& formula2) const {
     // Clear comparison mapping to ensure consistent atom assignment across both formulas
-    CTLSATParser::clearComparisonMapping();
+    MLSolverParser::clearComparisonMapping();
     
     // Check if ¬(formula1 ∧ ¬formula2) is unsatisfiable
     // This is equivalent to checking if formula1 → formula2
@@ -88,7 +91,7 @@ bool CTLSATInterface::refines(const std::string& formula1, const std::string& fo
     }
     return refines;
     //try {
-    //    std::string output = runCTLSAT(implication_test);
+    //    std::string output = runMLSolver(implication_test);
     //    std::cout << "Implication test output: " << output << "\n";
     //    return output.find("Input formula is satisfable") == std::string::npos;  
     //} catch (const std::exception& e) {
@@ -97,26 +100,26 @@ bool CTLSATInterface::refines(const std::string& formula1, const std::string& fo
     //}
 }
 
-bool CTLSATInterface::implies(const std::string& formula1, const std::string& formula2) const {
+bool MLSolverInterface::implies(const std::string& formula1, const std::string& formula2) const {
     // Clear comparison mapping to ensure consistent atom assignment
-    CTLSATParser::clearComparisonMapping();
+    MLSolverParser::clearComparisonMapping();
     
     // Check if ¬(formula1 ∧ ¬formula2) is unsatisfiable
     // This is equivalent to checking if formula1 → formula2
-    std::string implication_test = "~(" + toCTLSATSyntax(formula1) + "^~(" + toCTLSATSyntax(formula2) + "))";
+    std::string implication_test = "~(" + toMLSolverFormat(formula1) + "^~(" + toMLSolverFormat(formula2) + "))";
     return !isSatisfiable(implication_test);
 }
 
-bool CTLSATInterface::equivalent(const std::string& formula1, const std::string& formula2) const {
+bool MLSolverInterface::equivalent(const std::string& formula1, const std::string& formula2) const {
     return implies(formula1, formula2) && implies(formula2, formula1);
 }
 
-std::string CTLSATInterface::toCTLSATSyntax(const std::string& ctl_formula) {
-    // Use CTLSATParser to convert formula
+std::string MLSolverInterface::toMLSolverFormat(const std::string& ctl_formula) {
+    // Use MLSolverParser to convert formula
     try {
-        return CTLSATParser::convertString(ctl_formula);
+        return MLSolverParser::convertString(ctl_formula);
     } catch (const std::exception& e) {
-        std::cerr << "Exception in toCTLSATSyntax for formula: " << ctl_formula << "\n";
+        std::cerr << "Exception in toMLSolverFormat for formula: " << ctl_formula << "\n";
         std::cerr << "Error: " << e.what() << "\n";
         throw;
     }

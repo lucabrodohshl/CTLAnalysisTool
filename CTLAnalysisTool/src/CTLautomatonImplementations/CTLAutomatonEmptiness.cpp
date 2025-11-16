@@ -176,36 +176,6 @@ bool CTLAutomaton::__existsSatisfyingTransition(
             }
 
             
-
-            
-            //for (const auto& ns : move.next_states) {
-            //    bool this_state_ok = false;
-            //    
-            //    int target_block = blocks_->getBlockId(ns.state);
-            //    
-            //    if (target_block == curBlock) {
-            //        // Within same block: check if it's in the current fixpoint set
-            //        bool isNu = blocks_->isGreatestFixedPoint(curBlock);
-            //        if (isNu) {
-            //            // ν-block: must be in current approximation
-            //            this_state_ok = in_block_ok.count(ns.state) > 0;
-            //        } else {
-            //            // μ-block: optimistic (assume it will be added)
-            //            this_state_ok = true;
-            //        }
-            //    } else {
-            //        // Different block: check if it's in the already-computed good set
-            //        if (target_block >= 0 && target_block < (int)goodStates.size()) {
-            //            this_state_ok = goodStates[target_block].count(ns.state) > 0;
-            //        }
-            //    }
-            //    
-            //    if (!this_state_ok) {
-            //        next_states_ok = false;
-            //        break; // One bad state means the whole move fails
-            //    }
-            //}
-            
         } else {
             // EXISTENTIAL (E / OR): AT LEAST ONE next state must be in good sets
             next_states_ok = false; // assume none are good until we find one

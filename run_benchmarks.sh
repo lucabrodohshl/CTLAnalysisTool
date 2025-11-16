@@ -16,7 +16,7 @@
 EXTRA_ARGS=""
 SUFFIX=""
 SAT_PATH=""
-DEFAULT_SAT_PATH="./assets/extern/ctl-sat"
+DEFAULT_SAT_PATH="./assets/extern/"
 ANALYSIS_MODE="aut_based_naive"
 PROGRAM_NAME="sat"
 RUNNING_MODE="serial"
@@ -27,14 +27,14 @@ FOLDER="$1"
 shift
 
 if [[ -z "$FOLDER" ]]; then
-    echo "Usage: $0 <folder> [aut_based_naive|ctl_sat] [--sat-path <path>] [sat|refinement] [serial|parallel] [-j <num>]"
+    echo "Usage: $0 <folder> [aut_based_naive|ctl_sat|mlsolver] [--sat-path <path>] [sat|refinement] [serial|parallel] [-j <num>]"
     exit 1
 fi
 
 # Parse remaining optional arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        aut_based_naive|ctl_sat)
+        aut_based_naive|ctl_sat | mlsolver)
             ANALYSIS_MODE="$1"
             shift
             ;;
@@ -63,18 +63,24 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate analysis mode
-if [[ "$ANALYSIS_MODE" != "aut_based_naive" && "$ANALYSIS_MODE" != "ctl_sat" ]]; then
-    echo "Invalid analysis mode. Choose 'aut_based_naive' or 'ctl_sat'."
+if [[ "$ANALYSIS_MODE" != "aut_based_naive" && "$ANALYSIS_MODE" != "ctl_sat" && "$ANALYSIS_MODE" != "mlsolver" ]]; then
+    echo "Invalid analysis mode. Choose 'aut_based_naive', 'ctl_sat', or 'mlsolver'."
     exit 1
 fi
 
 # Set analysis mode specific arguments
 if [[ "$ANALYSIS_MODE" == "ctl_sat" ]]; then
     if [[ -z "$SAT_PATH" ]]; then
-        echo "WARNING: --sat-path not specified for ctl_sat mode. Using default: $DEFAULT_SAT_PATH"
-        SAT_PATH="$DEFAULT_SAT_PATH"
+        echo "WARNING: --sat-path not specified for ctl_sat mode. Using default: $DEFAULT_SAT_PATH/ctl-sat"
+        SAT_PATH="$DEFAULT_SAT_PATH/ctl-sat"
     fi
     EXTRA_ARGS+=" --use-extern-sat CTLSAT --sat-at $SAT_PATH"
+elif [[ "$ANALYSIS_MODE" == "mlsolver" ]]; then
+    if [[ -z "$SAT_PATH" ]]; then
+        echo "WARNING: --sat-path not specified for ctl_sat mode. Using default: $DEFAULT_SAT_PATH/mlsolver-sat"
+        SAT_PATH="$DEFAULT_SAT_PATH/mlsolver-sat"
+    fi
+    EXTRA_ARGS+=" --use-extern-sat MLSOLVER --sat-at $SAT_PATH"
 fi
 
 # Set program to run

@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "ctlsat_parser.h"
+#include "sat_parsers/ctlsat_parser.h"
 #include "parser.h"
 
 using namespace ctl;

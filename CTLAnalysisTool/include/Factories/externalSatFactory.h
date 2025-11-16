@@ -2,6 +2,7 @@
 
 #include "ExternSATInterface.h"
 #include "ExternalCTLSAT/ctl_sat.h"
+#include "ExternalCTLSAT/mlsolver_sat.h"
 #include <memory>
 #include <stdexcept>
 #include "types.h"
@@ -16,7 +17,7 @@ namespace ctl {
                 case AvailableCTLSATInterfaces::MOMOCTL:
                     //return std::make_unique<MOMOCTLInterface>(sat_path);
                 case AvailableCTLSATInterfaces::MLSOLVER:
-                    //return std::make_unique<MLSolverInterface>(sat_path);
+                    return std::make_unique<MLSolverInterface>(sat_path);
                 case AvailableCTLSATInterfaces::NONE:
                 default:
                     throw std::invalid_argument("Invalid or unsupported SAT interface type.");
