@@ -13,10 +13,9 @@ std::shared_ptr<CTLProperty> makeProperty(const std::string& formula_str) {
 int main() {
     // Test the ABTAs for the failing language inclusion tests   
     std::vector<std::string> test_formulas = {
-        //"!EF(p)", // should be non-empty
+        "E(false W (EG 3 <= extBus)) & (AF (2 <= extBus & (!(3 <= extBus))))", // should be non-empty
        // "!(AG (!(((AltitudePossibleVal <= stp3) & (Speed_Right_Wheel <= P5)))))"
-       " AG (( (usr5_ai1_re6 &(usr4_ai1_ce1 &(usr4_ai1_re1 &usr3_ai1_ce3))) ->  (usr5_ai1_re6 &usr4_ai1_ce1)) &  (usr4_ai1_re1 &(usr3_ai1_ce3 &(usr3_ni1_ne1 &none)))) ", // should be non-empty
-
+       
     };
     
     //save all log in a txt file
@@ -105,4 +104,6 @@ int main() {
         "EF (p) & AF (p)",
         "AG (p) | EG (p)",
         "AF (p) & EG (!p)", 
+
+        ./sat_checker ./assets/benchmark/Dataset/Properties//2024/ -o results/mlsolver_s/2024 --verbose  --use-extern-sat MLSOLVER --sat-at ./assets/extern//mlsolver-sat 
         */

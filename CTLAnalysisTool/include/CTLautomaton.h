@@ -213,6 +213,23 @@ private:
                                    std::vector<Move>>& state_to_moves,
                                    std::vector<Move>* fully_expanded_moves
                                 ) const;
+        
+        // Optimized versions that filter based on good blocks during expansion
+        std::vector<Move> __getMovesInternalFiltered(
+            const std::string_view state_name,
+            std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
+            int curBlock,
+            const std::unordered_set<std::string_view>& in_block_ok,
+            const std::vector<std::unordered_set<std::string_view>>& goodStates) const;
+        
+        void expandMoveRevisitedFiltered(
+            const Move& move,
+            const std::string_view current_state,
+            std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
+            std::vector<Move>* fully_expanded_moves,
+            int curBlock,
+            const std::unordered_set<std::string_view>& in_block_ok,
+            const std::vector<std::unordered_set<std::string_view>>& goodStates) const;
 
 };
 

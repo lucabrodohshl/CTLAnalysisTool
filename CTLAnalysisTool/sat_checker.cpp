@@ -24,7 +24,7 @@ void printUsage(const char* program_name) {
     std::cout << "  -v, --verbose        Verbose output\n";
     std::cout << "  --no-parallel        Disable parallel analysis\n";
     std::cout << "  --use-extern-sat <interface>  Specify which external SAT interface to use (CTLSAT, MOMOCTL, MLSOLVER)\n";
-    std::cout << "  --sat-at <path>      Specify the path to the external SAT solver\n";
+    std::cout << "  --sat-path <path>      Specify the path to the external SAT solver\n";
     std::cout << "\n";
     std::cout << "Input can be either a .txt file or a folder containing .txt files.\n";
     std::cout << "If a folder is provided, all .txt files will be processed.\n";
@@ -90,11 +90,11 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: --sat-interface option requires an argument\n";
                 return 1;
             }
-        }else if (arg == "--sat-at") {
+        }else if (arg == "--sat-path") {
             if (i + 1 < argc) {
                 sat_path = argv[++i];
             } else {
-                std::cerr << "Error: --sat-at option requires an argument\n";
+                std::cerr << "Error: --sat-path option requires an argument\n";
                 return 1;
             }
         } else if (arg == "-v" || arg == "--verbose") {
@@ -217,6 +217,7 @@ int main(int argc, char* argv[]) {
             if (use_extern_sat) {
                 analyzer.setExternalSATInterface(sat_interface, sat_path);
             }
+            analyzer.setVerbose(verbose);
             // Perform analysis
             auto result = analyzer.analyze();
             auto end_time = std::chrono::high_resolution_clock::now();

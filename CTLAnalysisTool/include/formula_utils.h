@@ -155,8 +155,8 @@ z3::expr conjToZ3Expr(const Conj& conj, z3::context& ctx);
 z3::expr disjToZ3Expr(const std::vector<Conj>& disj, z3::context& ctx);
 #endif
 
-CTLFormulaPtr preprocessFormula(const CTLFormula& formula);
-CTLFormulaPtr negateFormula(const CTLFormula& formula);
+CTLFormulaPtr preprocessFormula(const CTLFormula& formula, bool remove_comparisons = false);
+CTLFormulaPtr negateFormula(const CTLFormula& formula, bool remove_comparisons = false);
 
 
 } // namespace formula_utils

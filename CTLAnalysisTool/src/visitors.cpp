@@ -751,7 +751,80 @@ void WrapPropositionalVisitor::visit(const TemporalFormula& f) {
 }
 
 
+// ============================================================================
+// ComparisonRemoverVisitor Implementation
+// ============================================================================
 
+std::string ComparisonRemoverVisitor::getSimpleName(const std::string& comparison) {
+    auto it = comparison_map_.find(comparison);
+    if (it != comparison_map_.end()) {
+        return it->second;
+    }
+    
+    // Create a new simple name like "a1", "a2", "a3", etc. (matching mlsolver style)
+    std::string simple_name = "a" + std::to_string(counter_++);
+    comparison_map_[comparison] = simple_name;
+    reverse_map_[simple_name] = comparison;
+    return simple_name;
+}
+
+void ComparisonRemoverVisitor::visit(const AtomicFormula& f) {
+    result_ = f.clone();
+}
+
+void ComparisonRemoverVisitor::visit(const ComparisonFormula& f) {
+    // Convert comparison to simple atomic proposition like "p0", "p1", etc.
+    std::string original = f.toString();
+    std::string simple_name = getSimpleName(original);
+    result_ = std::make_shared<AtomicFormula>(simple_name);
+}
+
+void ComparisonRemoverVisitor::visit(const BooleanLiteral& f) {
+    result_ = f.clone();
+}
+
+void ComparisonRemoverVisitor::visit(const NegationFormula& f) {
+    f.operand->accept(*this);
+    auto inner = std::move(result_);
+    result_ = std::make_shared<NegationFormula>(std::move(inner));
+}
+
+void ComparisonRemoverVisitor::visit(const BinaryFormula& f) {
+    f.left->accept(*this);
+    auto left = std::move(result_);
+    f.right->accept(*this);
+    auto right = std::move(result_);
+    result_ = std::make_shared<BinaryFormula>(std::move(left), f.operator_, std::move(right));
+}
+
+void ComparisonRemoverVisitor::visit(const TemporalFormula& f) {
+    f.operand->accept(*this);
+    auto operand = std::move(result_);
+    
+    if (f.second_operand) {
+        f.second_operand->accept(*this);
+        auto second = std::move(result_);
+        result_ = std::make_shared<TemporalFormula>(f.operator_, std::move(operand), std::move(second));
+    } else {
+        result_ = std::make_shared<TemporalFormula>(f.operator_, std::move(operand));
+    }
+}
+
+CTLFormulaPtr ComparisonRemoverVisitor::convert(const CTLFormula& formula) {
+    ComparisonRemoverVisitor visitor;
+    formula.accept(visitor);
+    return visitor.getResult();
+}
+
+CTLFormulaPtr ComparisonRemoverVisitor::convert(const CTLFormula& formula,
+                                                 std::unordered_map<std::string, std::string>& out_comparison_map,
+                                                 std::unordered_map<std::string, std::string>& out_reverse_map) {
+    ComparisonRemoverVisitor visitor;
+    formula.accept(visitor);
+    out_comparison_map = visitor.getComparisonMap();
+    out_reverse_map = visitor.getReverseMap();
+    return visitor.getResult();
+}
 
 
 

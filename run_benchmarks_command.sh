@@ -135,7 +135,7 @@ run_job() {
     #echo "nohup ./ctl_refine_tool \"$subfolder\" -o \"$RESULTS_PREFIX/$year\" --verbose $EXTRA_ARGS > \"$log_file\" 2>&1 &"
     #check_refinements 
     #nohup ./check_refinements "$subfolder" -o "$RESULTS_PREFIX/$sub" --verbose $EXTRA_ARGS > "$log_file" 2>&1 &
-    nohup $PROGRAM_TO_RUN "$subfolder" -o "$RESULTS_PREFIX/$sub" --verbose $EXTRA_ARGS > "$log_file" 2>&1 &
+    echo "nohup $PROGRAM_TO_RUN "$subfolder" -o "$RESULTS_PREFIX/$sub" --verbose $EXTRA_ARGS > "$log_file" 2>&1 &"
 }
 
 # Main loop

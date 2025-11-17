@@ -25,14 +25,14 @@ CTLProperty::CTLProperty(CTLFormulaPtr formula) : formula_(std::move(formula)) {
 
 // Factory methods with caching
 std::shared_ptr<CTLProperty> CTLProperty::create(const std::string& formula_str, bool verbose) {
-    auto it = property_cache_.find(formula_str);
-    if (it != property_cache_.end()) {
-        return it->second;
-    }
+    //auto it = property_cache_.find(formula_str);
+    //if (it != property_cache_.end()) {
+    //    return it->second;
+    //}
     
     auto property = std::shared_ptr<CTLProperty>(new CTLProperty(formula_str));
     property->setVerbose(verbose);
-    property_cache_[formula_str] = property;
+    //property_cache_[formula_str] = property;
     return property;
 }
 
@@ -44,11 +44,11 @@ std::shared_ptr<CTLProperty> CTLProperty::create(CTLFormulaPtr formula, bool ver
 
 void CTLProperty::clearStaticCaches() {
     // Clear the static property cache
-    property_cache_.clear();
-    
-    // Force memory deallocation by swapping with empty map
-    std::unordered_map<std::string, std::shared_ptr<CTLProperty>> empty_cache;
-    property_cache_.swap(empty_cache);
+    //property_cache_.clear();
+    //
+    //// Force memory deallocation by swapping with empty map
+    //std::unordered_map<std::string, std::shared_ptr<CTLProperty>> empty_cache;
+    //property_cache_.swap(empty_cache);
 }
 
 void CTLProperty::clearInstanceCaches() {

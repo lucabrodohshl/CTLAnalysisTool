@@ -28,7 +28,7 @@ AnalysisResult RefinementAnalyzer::analyze() {
     result.false_properties = 0;
     if (use_parallel_analysis_) {
         std::cout << "Checking and removing unsatisfiable properties in parallel...\n";
-        _checkAndRemoveUnsatisfiableProperties();
+        _checkAndRemoveUnsatisfiablePropertiesParallel();
     } else {
         std::cout << "Checking and removing unsatisfiable properties serially...\n";
         _checkAndRemoveUnsatisfiableProperties();

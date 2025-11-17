@@ -534,23 +534,50 @@ z3::expr disjToZ3Expr(const std::vector<Conj>& disj, z3::context& ctx) {
 
 
 
-CTLFormulaPtr preprocessFormula(const CTLFormula& formula)
+CTLFormulaPtr preprocessFormula(const CTLFormula& formula, bool remove_comparisons)
 {
-    auto bin  = BinaryToAtomVisitor::convert(formula);
+    CTLFormulaPtr current = formula.clone();
+    
+    // Step 0: Optionally remove comparisons (convert to atomic propositions)
+    if (remove_comparisons) {
+        current = ComparisonRemoverVisitor::convert(*current);
+    }
+    
+    // Step 1: Convert binary operators to atoms where appropriate
+    auto bin  = BinaryToAtomVisitor::convert(*current);
+    
+    // Step 2: Convert to Negation Normal Form
     auto nnf  = formula_utils::toNNF(*bin);
+    
+    // Step 3: Normalize to core operators
     auto core = formula_utils::normalizeToCore(*nnf);
+    
     return core;
 }
 
 
 
-CTLFormulaPtr negateFormula(const CTLFormula& formula)
+CTLFormulaPtr negateFormula(const CTLFormula& formula, bool remove_comparisons)
 {
-    // Negate the formula and convert to NNF and core normal form.
-    NegationFormula neg(formula.clone());
+    CTLFormulaPtr current = formula.clone();
+    
+    // Step 0: Optionally remove comparisons (convert to atomic propositions)
+    if (remove_comparisons) {
+        current = ComparisonRemoverVisitor::convert(*current);
+    }
+    
+    // Negate the formula
+    NegationFormula neg(std::move(current));
+    
+    // Step 1: Convert binary operators to atoms where appropriate
     auto bin  = BinaryToAtomVisitor::convert(neg);
+    
+    // Step 2: Convert to NNF
     auto nnf  = formula_utils::toNNF(*bin);
+    
+    // Step 3: Normalize to core operators
     auto core = formula_utils::normalizeToCore(*nnf);
+    
     return core;
 }
 

@@ -96,9 +96,9 @@ std::string MLSolverParser::convertFormula(const CTLFormula& formula) {
         // Add parentheses for complex subformulas
         if (operand_str.find(' ') != std::string::npos || 
             operand_str.find('(') != std::string::npos) {
-            return "!(" + operand_str + ")";
+            return "! (" + operand_str + ")";
         }
-        return "!" + operand_str;
+        return "! " + operand_str;
     }
     
     // Handle binary formulas (AND, OR, IMPLIES)
@@ -147,13 +147,13 @@ std::string MLSolverParser::convertFormula(const CTLFormula& formula) {
                 // E[φ W ψ] = ¬A[(¬ψ) U (¬φ ∧ ¬ψ)]
                 // This is semantically equivalent and valid CTL
                 std::string second_str = convertFormula(*temporal->second_operand);
-                return "!(A ((! (" + second_str + ")) U ((! (" + operand_str + ")) & (! (" + second_str + ")))))";
+                return "! (A ((! (" + second_str + ")) U ((! (" + operand_str + ")) & (! (" + second_str + ")))))";
             }
             case TemporalOperator::AW: {
                 // A[φ W ψ] = ¬E[(¬ψ) U (¬φ ∧ ¬ψ)]
                 // This is semantically equivalent and valid CTL
                 std::string second_str = convertFormula(*temporal->second_operand);
-                return "!(E ((! (" + second_str + ")) U ((! (" + operand_str + ")) & (! (" + second_str + ")))))";
+                return "! (E ((! (" + second_str + ")) U ((! (" + operand_str + ")) & (! (" + second_str + ")))))";
             }
         }
     }

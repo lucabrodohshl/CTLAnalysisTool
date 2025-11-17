@@ -12,9 +12,9 @@ namespace ctl {
 
   void CTLAutomaton::buildFromFormula(const CTLFormula& formula, bool symbolic) {
     if (verbose_) std::cout << "Building automaton from formula: " << formula.toString() << "\n";
-    p_original_formula_ = std::move(formula_utils::preprocessFormula(formula));
+    p_original_formula_ = std::move(formula_utils::preprocessFormula(formula, true));
     if (verbose_) std::cout << "Converted formula: " << p_original_formula_->toString() << "\n";
-    p_negated_formula_ = std::move(formula_utils::negateFormula(formula));
+    p_negated_formula_ = std::move(formula_utils::negateFormula(formula,     true));
     smt_interface_ = createDefaultSMTInterface();
     __buildFromFormula( false);
     blocks_ = std::make_unique<SCCBlocks>(__computeSCCs());
@@ -22,7 +22,7 @@ namespace ctl {
     
     __decideBlockTypes();
     //blocks_->print();
-    m_expanded_transitions_ = getMoves();
+    //m_expanded_transitions_ = getMoves();
   }
 
 
@@ -98,7 +98,10 @@ bool CTLAutomaton::__isSatisfiable(const std::string& g) const {
     if (!smt_interface_) {
         throw std::runtime_error("SMT interface not initialized");
     }
-    return smt_interface_->isSatisfiable(g);
+
+    bool r= smt_interface_->isSatisfiable(g);
+    std::cout << "Checking satisfiability of: " << g << " => " << (r ? "SAT" : "UNSAT") << "\n";
+    return r;
 }
 
 
@@ -182,6 +185,15 @@ bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) con
                              const std::string& guard,
                              const std::vector<Conj>& disjuncts) {
       // Record edges for SCCs
+      std::cout << "Adding DNF for state " << from << " with guard " << guard << " and " << disjuncts.size() << " disjuncts.\n";
+      std::cout << "  Disjuncts:\n";
+      for (const auto& c : disjuncts) {
+          std::cout << "    Conj: ";
+          for (const auto& a : c.atoms) {
+              std::cout << a.qnext << " ";
+          }
+          std::cout << "\n";
+      }
       auto& succs = state_successors_[from];
       for (const auto& c : disjuncts) {
           for (const auto& a : c.atoms) {
@@ -220,19 +232,44 @@ bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) con
             {
                 auto a = std::dynamic_pointer_cast<AtomicFormula>(state->formula);
                 // δ(q) := proposition as guard, with no spawned copies
-                std::string g = __handleProp(a->proposition, symbolic);
-                //if (g != "false") 
-                    addDNF(state->name, g, { Conj{ {} } });
+                //std::string g = __handleProp(a->proposition, symbolic);
+                std::cout << "Handling atomic proposition for state " << state->name << ": " << a->proposition << "\n";
+                bool sat = __isSatisfiable(a->proposition);
+                if (!sat){
+                    addDNF(state->name, "false", { Conj{ {} } });
+                    //// we also need to change the state to "false"
+                    //for (auto& s : v_states_) {
+                    //    if (s->name == state->name) {
+                    //        s->formula = std::make_shared<BooleanLiteral>(false);
+                    //        break;
+                    //    }
+                    //}
+                } //
+                else addDNF(state->name, a->proposition, { Conj{ {} } });
                 break;
             }
             case FormulaType::NEGATION: 
               {
                   auto n = std::dynamic_pointer_cast<NegationFormula>(state->formula);
                   if (auto atom = std::dynamic_pointer_cast<AtomicFormula>(n->operand)) {
-                      std::string g = __handleProp("!" + atom->proposition, symbolic);
+                      //std::string g = __handleProp("!" + atom->proposition, symbolic);
+                      bool sat = __isSatisfiable("!" + atom->proposition);
                       //if (g == "false") m_rejecting_states_.insert(s);
                       //if (g != "false")  
-                      addDNF(state->name, g, { Conj{ {} } });
+                      //addDNF(state->name, g, { Conj{ {} } });
+                      if (!sat){
+                            addDNF(state->name, "false", { Conj{ {} } });
+                            // we also need to change the state to "false"
+                            //for (auto& s : v_states_) {
+                            //    if (s->name == state->name) {
+                            //        s->formula = std::make_shared<BooleanLiteral>(false);
+                            //        break;
+                            //    }
+                            //}
+
+                        } else {
+                            addDNF(state->name, "!" + atom->proposition, { Conj{ {} } });
+                        }
                       break;
                   }
                   // Handle other negations if needed
@@ -462,6 +499,18 @@ bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) con
                             addDNF(state->name, GFalse, {});
                             break;
                         }
+                        if (phi_false && !psi_false) {
+                            // A(false U ψ) = ψ
+                            std::string_view s_psi = getStateOfFormula(psi);
+                            disjuncts.push_back(Conj{ { { -1, s_psi } } });
+                            addDNF(state->name, GTrue, disjuncts);
+                            break;
+                        }
+                        if (psi_false && !phi_false) {
+                            // A(φ U false) = false
+                            addDNF(state->name, GFalse, {});
+                            break;
+                        }
 
                         // (1) Immediate satisfaction: ψ
                         if (!psi_false) {
@@ -505,12 +554,28 @@ bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) con
                         bool psi_false = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
                                         !std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
                         
+
+                        std::cout << "Handling E(φ U ψ) for state " << state->name << " with φ=" << phi.toString() << " and ψ=" << psi.toString() << "\n";
                         // Simplify special cases
                         if (psi_true) {  // E(φ U true) = true
                             addDNF(state->name, GTrue, { Conj{ {} } });
                             break;
                         }
                         if (psi_false && phi_false) {  // E(false U false) = false
+                            addDNF(state->name, GFalse, {});
+                            break;
+                        }
+
+                        if (phi_false && !psi_false) {
+                            // E(false U ψ) = ψ
+                            std::string_view s_psi = getStateOfFormula(psi);
+                            disjuncts.push_back(Conj{ { { -1, s_psi } } });
+                            addDNF(state->name, GTrue, disjuncts);
+                            break;
+                        }
+
+                        if(psi_false){
+                            // E(φ U false) = false
                             addDNF(state->name, GFalse, {});
                             break;
                         }
@@ -982,6 +1047,238 @@ bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) con
     //    };
 
 
+
+
+    // ============================================================================
+    // Optimized filtered versions that check good blocks during expansion
+    // ============================================================================
+    
+    std::vector<Move> CTLAutomaton::__getMovesInternalFiltered(
+        const std::string_view state_name,
+        std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
+        int curBlock,
+        const std::unordered_set<std::string_view>& in_block_ok,
+        const std::vector<std::unordered_set<std::string_view>>& goodStates) const {
+        
+        // Check if already memoized
+        auto memo_it = state_to_moves.find(state_name);
+        if (memo_it != state_to_moves.end()) {
+            return memo_it->second;
+        }
+        
+        // Get raw transitions for this state
+        auto it = m_transitions_.find(state_name);
+        if (it == m_transitions_.end() || it->second.empty()) {
+            state_to_moves[state_name] = {};
+            return {};
+        }
+        
+        // Convert raw transitions to base DNF moves
+        auto base_moves = transitionToDNF(it->second);
+        std::vector<Move> fully_expanded_moves;
+        
+        for (const auto& base_move : base_moves) {
+            // Check if move is potentially satisfiable before expanding
+            //if (!__isSatisfiable(base_move.atoms)) {
+            //    continue;
+            //}
+            
+            // Recursively expand with filtering
+            //expandMoveRevisitedFiltered(base_move, state_name, state_to_moves, 
+            //                           &fully_expanded_moves, curBlock, in_block_ok, goodStates);
+            expandMoveRevisited(base_move, state_name, state_to_moves, &fully_expanded_moves);
+        }
+        
+        // Remove duplicates
+        std::unordered_set<Move> seen_moves;
+        std::vector<Move> unique_moves;
+        
+        for (const auto& move : fully_expanded_moves) {
+            if (seen_moves.find(move) == seen_moves.end()) {
+                seen_moves.insert(move);
+                unique_moves.push_back(move);
+            }
+        }
+        
+        state_to_moves[state_name] = unique_moves;
+        return unique_moves;
+    }
+    
+    
+    void CTLAutomaton::expandMoveRevisitedFiltered(
+        const Move& move,
+        const std::string_view current_state,
+        std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
+        std::vector<Move>* fully_expanded_moves,
+        int curBlock,
+        const std::unordered_set<std::string_view>& in_block_ok,
+        const std::vector<std::unordered_set<std::string_view>>& goodStates) const {
+        
+        // Helper to check if a state is in good blocks
+        auto is_state_good = [&](const DirectionStatePair& ns) -> bool {
+            if (ns.dir == -1) {
+                // Local successor - always ok for expansion purposes
+                return true;
+            }
+            
+            int target_block = blocks_->getBlockId(ns.state);
+            
+            if (target_block == curBlock) {
+                // Within same block
+                bool isNu = blocks_->isGreatestFixedPoint(curBlock);
+                if (isNu) {
+                    return in_block_ok.count(ns.state) > 0;
+                } else {
+                    // μ-block: optimistic
+                    return true;
+                }
+            } else {
+                // Different block
+                if (target_block >= 0 && target_block < (int)goodStates.size()) {
+                    return goodStates[target_block].count(ns.state) > 0;
+                }
+                return false;
+            }
+        };
+        
+        // Gather expansion options for each referenced next state
+        std::vector<std::vector<Move>> expansion_options;
+        
+        for (const auto& pair : move.next_states) {
+            // Filter out bad successors early
+            if (!is_state_good(pair)) {
+                // This successor is not in good blocks, skip this entire move
+                return;
+            }
+            
+            const std::string_view next_state = pair.state;
+            std::vector<Move> options_for_this_pair;
+            
+            // Self-reference: stop expansion, keep it as-is
+            if (next_state == current_state) {
+                Move self_move;
+                self_move.atoms = move.atoms;
+                self_move.next_states.insert(pair);
+                options_for_this_pair.push_back(self_move);
+            }
+            // Expand via already memoized state moves
+            else {
+                auto it = state_to_moves.find(next_state);
+                if (it != state_to_moves.end() && !it->second.empty()) {
+                    const auto& next_moves = it->second;
+                    
+                    for (const auto& next_move : next_moves) {
+                        // Check all next_move's successors are good
+                        bool all_good = true;
+                        for (const auto& ns : next_move.next_states) {
+                            if (!is_state_good(ns)) {
+                                all_good = false;
+                                break;
+                            }
+                        }
+                        
+                        if (!all_good) {
+                            continue; // Skip this option
+                        }
+                        
+                        Move expanded;
+                        expanded.atoms = move.atoms;
+                        expanded.atoms.insert(next_move.atoms.begin(), next_move.atoms.end());
+                        
+                        if (!next_move.next_states.empty()) {
+                            for (const auto& np : next_move.next_states) {
+                                expanded.next_states.insert(np);
+                            }
+                        }
+                        options_for_this_pair.push_back(std::move(expanded));
+                    }
+                } else {
+                    // No info for that state: keep as symbolic reference if it's good
+                    Move fallback;
+                    fallback.atoms = move.atoms;
+                    fallback.next_states.insert(pair);
+                    options_for_this_pair.push_back(std::move(fallback));
+                }
+            }
+            
+            if (options_for_this_pair.empty()) {
+                // No valid options for this pair, entire move is invalid
+                return;
+            }
+            
+            expansion_options.push_back(std::move(options_for_this_pair));
+        }
+        
+        // Handle terminal (no next-states)
+        if (expansion_options.empty()) {
+            Move terminal;
+            terminal.atoms = move.atoms;
+            fully_expanded_moves->push_back(std::move(terminal));
+            return;
+        }
+        
+        // Determine expansion type (conjunctive vs disjunctive)
+        bool is_conjunctive = false;
+        
+        auto op_it = m_state_operator_.find(current_state);
+        if (op_it != m_state_operator_.end()) {
+            is_conjunctive = (op_it->second == BinaryOperator::AND);
+        } else {
+            auto state_it = std::find_if(v_states_.begin(), v_states_.end(),
+                                        [&](const CTLStatePtr& s) { return s->name == current_state; });
+            if (state_it != v_states_.end()) {
+                const auto& formula = (*state_it)->formula;
+                auto temporal = std::dynamic_pointer_cast<TemporalFormula>(formula);
+                if (temporal) {
+                    is_conjunctive = (temporal->operator_ == TemporalOperator::AX ||
+                                    temporal->operator_ == TemporalOperator::AU ||
+                                    temporal->operator_ == TemporalOperator::AU_TILDE);
+                }
+                auto binary = std::dynamic_pointer_cast<BinaryFormula>(formula);
+                if (binary && binary->operator_ == BinaryOperator::AND) {
+                    is_conjunctive = true;
+                }
+            }
+        }
+        
+        Move base_move;
+        base_move.atoms = move.atoms;
+        
+        // Perform expansion based on type
+        if (is_conjunctive) {
+            // Cartesian product (AND)
+            std::function<void(size_t, Move)> generate = [&](size_t i, Move acc) {
+                if (i == expansion_options.size()) {
+                    // Final satisfiability check
+                    if (__isSatisfiable(acc.atoms)) {
+                        fully_expanded_moves->push_back(acc);
+                    }
+                    return;
+                }
+                for (const auto& opt : expansion_options[i]) {
+                    Move combined = acc;
+                    combined.atoms.insert(opt.atoms.begin(), opt.atoms.end());
+                    combined.next_states.insert(opt.next_states.begin(), opt.next_states.end());
+                    generate(i + 1, std::move(combined));
+                }
+            };
+            generate(0, base_move);
+        } else {
+            // Union (OR)
+            for (const auto& opts : expansion_options) {
+                for (const auto& opt : opts) {
+                    Move combined = base_move;
+                    combined.atoms.insert(opt.atoms.begin(), opt.atoms.end());
+                    combined.next_states.insert(opt.next_states.begin(), opt.next_states.end());
+                    
+                    // Check satisfiability before adding
+                    if (__isSatisfiable(combined.atoms)) {
+                        fully_expanded_moves->push_back(std::move(combined));
+                    }
+                }
+            }
+        }
+    }
 
 
 }

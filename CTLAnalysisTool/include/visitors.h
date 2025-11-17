@@ -143,4 +143,46 @@ public:
     void visit(const TemporalFormula& f) override;
 };
 
+/**
+ * @brief Visitor that converts ComparisonFormula nodes to AtomicFormula nodes with simple names.
+ *
+ * This is useful for compatibility with solvers like mlsolver that don't support
+ * comparison operators directly. Each comparison (e.g., "x <= 5") is converted
+ * to a simple atomic proposition like "p0", "p1", etc.
+ *
+ * Example:
+ *   ComparisonFormula("x", "<=", "5") -> AtomicFormula("p0")
+ *   ComparisonFormula("y", ">", "10") -> AtomicFormula("p1")
+ *
+ * The mapping is stored and can be retrieved for later reference.
+ */
+class ComparisonRemoverVisitor : public CTLFormulaVisitor {
+private:
+    CTLFormulaPtr result_;
+    std::unordered_map<std::string, std::string> comparison_map_; // original -> simple name
+    std::unordered_map<std::string, std::string> reverse_map_;     // simple name -> original
+    int counter_;
+
+    std::string getSimpleName(const std::string& comparison);
+
+public:
+    ComparisonRemoverVisitor() : counter_(0) {}
+
+    void visit(const AtomicFormula& f) override;
+    void visit(const ComparisonFormula& f) override;
+    void visit(const BooleanLiteral& f) override;
+    void visit(const NegationFormula& f) override;
+    void visit(const BinaryFormula& f) override;
+    void visit(const TemporalFormula& f) override;
+
+    CTLFormulaPtr getResult() const { return result_; }
+    const std::unordered_map<std::string, std::string>& getComparisonMap() const { return comparison_map_; }
+    const std::unordered_map<std::string, std::string>& getReverseMap() const { return reverse_map_; }
+
+    static CTLFormulaPtr convert(const CTLFormula& formula);
+    static CTLFormulaPtr convert(const CTLFormula& formula, 
+                                  std::unordered_map<std::string, std::string>& out_comparison_map,
+                                  std::unordered_map<std::string, std::string>& out_reverse_map);
+};
+
 }

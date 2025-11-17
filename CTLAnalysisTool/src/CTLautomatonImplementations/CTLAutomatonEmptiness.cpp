@@ -15,8 +15,7 @@ namespace ctl {
         //local_guard_cache_.clear();
         if (!blocks_) {
             std::cerr << "Warning: SCC blocks not computed yet. Computing now.\n";
-            auto p = std::make_unique<SCCBlocks>(__computeSCCs());
-            blocks_ = std::move(p);
+            blocks_ = std::make_unique<SCCBlocks>(__computeSCCs());
             __decideBlockTypes();
         }
 
@@ -110,38 +109,60 @@ bool CTLAutomaton::__existsSatisfyingTransition(
     std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves
 ) const {
 
-    auto base_moves = __getMovesInternal(q, state_to_moves);
+    auto base_moves = __getMovesInternalFiltered(q, state_to_moves, curBlock, in_block_ok, goodStates);
 
     // For each move, check if it's satisfiable AND its next-states are acceptable
-    //std::cout << "Dealing with "<< base_moves.size() <<" moves for state "<< std::string(q) << "\n";
-    int moves_done = 0;
+    std::cout << "Dealing with "<< base_moves.size() <<" moves for state "<< std::string(q) << "\n";
     for (const auto& move : base_moves) {
-        //std::cout << "  Move " << (++moves_done) << "/" << base_moves.size() << "\n";
-        // Step 1: Check if atoms are satisfiable
-        if (!__isSatisfiable(move.atoms)) {
+        std::cout << move.toString() << "\n";
+    }
+    bool found_satisfying = false;
+    
+    //#pragma omp parallel for schedule(dynamic) shared(found_satisfying)
+    for (size_t i = 0; i < base_moves.size(); ++i) {
+        // Early exit if another thread found a solution
+        if (found_satisfying) continue;
+        
+        const auto& move = base_moves[i];
+        
+        // Step 1: Check if atoms are satisfiable (CRITICAL SECTION - not thread-safe)
+        bool atoms_satisfiable;
+        //#pragma omp critical(isSatisfiable)
+        //{
+            atoms_satisfiable = __isSatisfiable(move.atoms);
+        //}
+        
+        if (!atoms_satisfiable) {
             continue;
         }
+        
         // Step 2: Handle terminal moves (no next states) - these are always OK if atoms are SAT
         if (move.next_states.empty()) {
-            return true;
+            //#pragma omp atomic write
+            std::cout << "Found satisfying terminal move for state " << std::string(q) << "\n";
+            found_satisfying = true;
+            continue;
         }
 
         // Step 3: Check next-states based on block type (universal vs existential)
         bool next_states_ok = false;
+
+        std::array<std::vector<std::string_view>, 2> dir_to_states;
+        for (const auto& ns : move.next_states) {
+            if(ns.dir==-1) continue;
+            dir_to_states[ns.dir].push_back(ns.state);
+        }
+        std::cout << " Is block universal? " << (block_is_universal ? "YES" : "NO") << "\n";
         
         if (block_is_universal) {
-            //std::cout << "   \n";
             // UNIVERSAL (A / AND): ALL next states must be in good sets
             next_states_ok = true; // assume all are good until proven otherwise
             // we group states by the direction
-            std::array<std::vector<std::string_view>, 2> dir_to_states;
-            for (const auto& ns : move.next_states) {
-                if(ns.dir==-1) continue;
-                dir_to_states[ns.dir].push_back(ns.state);
-            }
+            
             // for each direction, we must ensure that
             // 1. both states are in good blocks
             // 2. the atoms from those states (-1) are conjunction compatible
+            bool isNu = blocks_->isGreatestFixedPoint(curBlock);
             for (const auto& statesAtDir : dir_to_states) {
                 if (statesAtDir.empty()) continue;
                 std::unordered_set<std::string> accumGuard;
@@ -157,7 +178,7 @@ bool CTLAutomaton::__existsSatisfyingTransition(
                             if (ns.dir == -1) continue; // local handled elsewhere
                             int tb = blocks_->getBlockId(ns.state);
                             if (tb == curBlock) {
-                                bool isNu = blocks_->isGreatestFixedPoint(curBlock);
+                                
                                 if (isNu && !in_block_ok.count(ns.state))
                                     { obligationsOK = false; break; }
                             } else {
@@ -166,21 +187,45 @@ bool CTLAutomaton::__existsSatisfyingTransition(
                                     { obligationsOK = false; break; }
                             }
                         }
-                        if (!obligationsOK) return false;
+                        if (!obligationsOK) {
+                            next_states_ok = false;
+                            goto exit_universal;
+                        }
+                        std::cout << "    Adding atoms from state " << std::string(s) << ": ";
+                        for (const auto& a : mv.atoms) {
+                            std::cout << a << " ";
+                        }
+                        std::cout << "\n";
                         __appendGuard(accumGuard, mv.atoms);
                     }
                 }
-                if (!__isSatisfiable(accumGuard)) {
-                    return false;
+                
+                // Check satisfiability (CRITICAL SECTION - not thread-safe)
+                bool guard_satisfiable;
+                std::cout << "  Checking accumulated guard for direction " << (statesAtDir.empty() ? -1 : move.next_states.find({0, statesAtDir[0]})->dir) << ": ";
+                for (const auto& a : accumGuard) {
+                    std::cout << a << " ";
+                }
+                std::cout << "\n";
+                //#pragma omp critical(isSatisfiable)
+                //{
+                    guard_satisfiable = __isSatisfiable(accumGuard);
+                //}
+                
+                if (!guard_satisfiable) {
+                    std::cout << "  Guard not satisfiable, failing universal condition.\n";
+                    next_states_ok = false;
+                    goto exit_universal;
                 }
             }
-
+            exit_universal:;
             
         } else {
             // EXISTENTIAL (E / OR): AT LEAST ONE next state must be in good sets
             next_states_ok = false; // assume none are good until we find one
             
             for (const auto& ns : move.next_states) {
+                std::cout << "  Checking next state " << std::string(ns.state) << " dir=" << ns.dir << "\n";
                 bool this_state_ok = false;
                 
                 int target_block = blocks_->getBlockId(ns.state);
@@ -192,7 +237,8 @@ bool CTLAutomaton::__existsSatisfyingTransition(
                         this_state_ok = in_block_ok.count(ns.state) > 0;
                     } else {
                         // μ-block: optimistic
-                        this_state_ok = true;
+                        //this_state_ok = true;
+                        this_state_ok = false;
                     }
                 } else {
                     // Different block
@@ -210,12 +256,12 @@ bool CTLAutomaton::__existsSatisfyingTransition(
 
         // If this move is satisfiable AND its next-states are OK, we found a valid transition
         if (next_states_ok) {
-            return true;
+            #pragma omp atomic write
+            found_satisfying = true;
         }
     }
-
-    // No satisfying transition found
-    return false;
+    std::cout << "Here" << std::string(q) << " found_satisfying=" << found_satisfying << "\n";
+    return found_satisfying;
 }
 
 // Helper functions for per-child joint realizability
