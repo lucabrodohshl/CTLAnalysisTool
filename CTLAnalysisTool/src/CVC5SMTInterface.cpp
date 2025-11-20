@@ -12,16 +12,16 @@ CVC5SMTInterface::CVC5SMTInterface()
     // solver_->setLogic("QF_LIA"); // Quantifier-free linear integer arithmetic
 }
 
-bool CVC5SMTInterface::isSatisfiable(const std::string& formula) const {
+bool CVC5SMTInterface::isSatisfiable(const std::string& formula, bool without_parsing) const {
     // Handle special cases
     if (formula == "true") return true;
     if (formula.empty() || formula == "false") return false;
     
     // Delegate to the set-based version
-    return isSatisfiable(std::unordered_set<std::string>{formula});
+    return isSatisfiable(std::unordered_set<std::string>{formula}, without_parsing);
 }
 
-bool CVC5SMTInterface::isSatisfiable(const std::unordered_set<std::string>& formulas) const {
+bool CVC5SMTInterface::isSatisfiable(const std::unordered_set<std::string>& formulas, bool without_parsing) const {
     // Handle empty set
     if (formulas.empty()) return true;
     

@@ -8,6 +8,8 @@
 
 namespace ctl {
 
+
+
 /**
  * @brief Z3-based implementation of the SMT interface
  * 
@@ -28,11 +30,44 @@ public:
     Z3SMTInterface(Z3SMTInterface&&) noexcept = default;
     Z3SMTInterface& operator=(Z3SMTInterface&&) noexcept = default;
 
-    bool isSatisfiable(const std::string& formula) const override;
-    bool isSatisfiable(const std::unordered_set<std::string>& formulas) const override;
+    bool isSatisfiable(const std::string& formula, bool without_parsing = false) const override;
+    bool isSatisfiable(const std::unordered_set<std::string>& formulas, bool without_parsing = false) const override;
     
     std::unique_ptr<SMTInterface> clone() const override;
+    std::string simplify(const std::string& formula) const override;
+    void* createAndSimplify(const std::string& formula) const override {
+        z3::expr expr = parseToZ3Expression(formula);
+        Z3_ast a = expr.simplify();
+        std::cout << "Z3SMTInterface::createAndSimplify called with formula: " << formula 
+                  << " => simplified to: " << z3::to_expr(*ctx_, a) << "\n";
+        auto n = reinterpret_cast<void*>(a);
+        if (n == nullptr){
+            throw std::runtime_error("Z3 simplification returned null");
+        }
+        return n;
+    }
+    bool isSatisfiable(void* formula) const override;
+    void* getFalse() const override {
+        Z3_ast false_expr = ctx_->bool_val(false);
+        return reinterpret_cast<void*>(false_expr);
+    }
+    void* getTrue() const override {
+        Z3_ast true_expr = ctx_->bool_val(true);
+        return reinterpret_cast<void*>(true_expr);
+    }
 
+    void* makeOr(void* left, void* right) const override {
+        z3::expr left_expr = z3::to_expr(*ctx_, reinterpret_cast<Z3_ast>(left));
+        z3::expr right_expr = z3::to_expr(*ctx_, reinterpret_cast<Z3_ast>(right));
+        Z3_ast or_expr = left_expr || right_expr;
+        return reinterpret_cast<void*>(or_expr);
+    }
+    void* makeAnd(void* left, void* right) const override {
+        z3::expr left_expr = z3::to_expr(*ctx_, reinterpret_cast<Z3_ast>(left));
+        z3::expr right_expr = z3::to_expr(*ctx_, reinterpret_cast<Z3_ast>(right));
+        Z3_ast and_expr = left_expr && right_expr;
+        return reinterpret_cast<void*>(and_expr);
+    }
 private:
     /**
      * @brief Parse a string formula into a Z3 expression

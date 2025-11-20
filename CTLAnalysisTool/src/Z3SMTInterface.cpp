@@ -17,16 +17,46 @@ Z3SMTInterface::Z3SMTInterface()
 // the context it references, which is guaranteed by member
 // destruction order (reverse of declaration order).
 
-bool Z3SMTInterface::isSatisfiable(const std::string& formula) const {
+bool Z3SMTInterface::isSatisfiable(const std::string& formula, bool without_parsing) const {
     // Handle special cases
     if (formula == "true") return true;
     if (formula.empty() || formula == "false") return false;
     
     // Delegate to the set-based version
-    return isSatisfiable(std::unordered_set<std::string>{formula});
+    return isSatisfiable(std::unordered_set<std::string>{formula}, without_parsing);
 }
 
-bool Z3SMTInterface::isSatisfiable(const std::unordered_set<std::string>& formulas) const {
+
+std::string Z3SMTInterface::simplify(const std::string& formula) const {
+    {
+        // Implement simplification using Z3
+        z3::expr expr = parseToZ3Expression(formula);
+        z3::expr simplified = expr.simplify();
+        return simplified.to_string();
+    }
+}
+
+bool Z3SMTInterface::isSatisfiable(void* formula) const {
+    if (formula == nullptr) return true; // empty formula is satisfiable
+    Z3_ast expr = reinterpret_cast<Z3_ast>(formula);
+    std::cout << "Z3SMTInterface::isSatisfiable called with expr: " << z3::to_expr(*ctx_, expr) << "\n";
+    try {
+        solver_->push();
+        solver_->add(z3::to_expr(*ctx_, expr));
+        bool result = (solver_->check() == z3::sat);
+        solver_->pop();
+        return result;
+    } catch (const std::exception& e) {
+        try {
+            solver_->pop();
+        } catch (...) {
+            // Ignore errors during cleanup
+        }
+        throw std::runtime_error(std::string("Z3 satisfiability check failed: ") + e.what());
+    }
+}
+
+bool Z3SMTInterface::isSatisfiable(const std::unordered_set<std::string>& formulas, bool without_parsing) const {
     // Handle empty set
     if (formulas.empty()) return true;
     
@@ -44,7 +74,13 @@ bool Z3SMTInterface::isSatisfiable(const std::unordered_set<std::string>& formul
             }
             
             // Parse and add the formula
-            z3::expr expr = parseToZ3Expression(formula);
+            if (!without_parsing) {
+                z3::expr expr = parseToZ3Expression(formula);
+                solver_->add(expr);
+                continue;
+            }
+            
+            z3::expr expr = ctx_->int_const(formula.c_str());
             solver_->add(expr);
 
         }

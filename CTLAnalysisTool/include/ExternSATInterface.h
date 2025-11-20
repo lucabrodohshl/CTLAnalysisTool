@@ -14,7 +14,7 @@ namespace ctl {
             virtual bool implies(const std::string& formula1, const std::string& formula2) const = 0;
             // Check if formula1 is equivalent to formula2
             virtual bool equivalent(const std::string& formula1, const std::string& formula2) const = 0;
-
+           
         protected:
             bool verbose_ = false;
             std::string sat_path_;

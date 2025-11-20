@@ -53,7 +53,7 @@ std::unordered_set<std::string> getAtomicForAnalysis(const CTLFormula& formula) 
             if (dynamic_cast<const AtomicFormula*>(neg->operand.get()) ||
                 dynamic_cast<const ComparisonFormula*>(neg->operand.get())) {
                 // Include the negation as part of the atom representation
-                atoms.insert("!" + neg->operand->toString());
+                atoms.insert("!(" + neg->operand->toString() + ")");
             } else {
                 collect(*neg->operand);
             }
@@ -176,16 +176,18 @@ std::unique_ptr<CTLFormula> normalizeToCore(const CTLFormula& f) {
                 return std::make_unique<TemporalFormula>(Op::AU, std::move(tru), std::move(phi));
             }
             // EG φ  ≡  E(false Ũ φ)
+            //
             case Op::EG: {
                 auto phi  = normalizeToCore(*t->operand);
                 auto fls  = std::make_unique<BooleanLiteral>(false);
-                return std::make_unique<TemporalFormula>(Op::EU_TILDE, std::move(fls), std::move(phi));
+                return std::make_unique<TemporalFormula>(Op::ER, std::move(fls), std::move(phi));
             }
             // AG φ  ≡  A(false Ũ φ)
+            //AG(φ) ≡ φ ∧ AX(AG(φ))
             case Op::AG: {
                 auto phi  = normalizeToCore(*t->operand);
                 auto fls  = std::make_unique<BooleanLiteral>(false);
-                return std::make_unique<TemporalFormula>(Op::AU_TILDE, std::move(fls), std::move(phi));
+                return std::make_unique<TemporalFormula>(Op::AR, std::move(fls), std::move(phi));
             }
             // EW(φ,ψ) ≡ EU(φ,ψ) ∨ EG φ  ≡ EU(φ,ψ) ∨ EŨ(false,φ)
             case Op::EW: {
@@ -194,7 +196,7 @@ std::unique_ptr<CTLFormula> normalizeToCore(const CTLFormula& f) {
                               normalizeToCore(*t->second_operand));
                 //auto eg   = std::make_unique<TemporalFormula>(Op::EG,
                 //              normalizeToCore(*t->operand));
-                auto normalized_eg = std::make_unique<TemporalFormula>(Op::EU_TILDE,
+                auto normalized_eg = std::make_unique<TemporalFormula>(Op::ER,
                                       std::make_unique<BooleanLiteral>(false),
                                       normalizeToCore(*t->operand));
                 return std::make_unique<BinaryFormula>(std::move(L_eu), BinaryOperator::OR, std::move(normalized_eg));
@@ -206,7 +208,7 @@ std::unique_ptr<CTLFormula> normalizeToCore(const CTLFormula& f) {
                               normalizeToCore(*t->second_operand));
                 //auto ag   = std::make_unique<TemporalFormula>(Op::AG,
                 //              normalizeToCore(*t->operand));
-                auto normalized_ag = std::make_unique<TemporalFormula>(Op::AU_TILDE,
+                auto normalized_ag = std::make_unique<TemporalFormula>(Op::AR,
                                       std::make_unique<BooleanLiteral>(false),
                                       normalizeToCore(*t->operand));
                 return std::make_unique<BinaryFormula>(std::move(L_au), BinaryOperator::OR, std::move(normalized_ag));
@@ -215,8 +217,8 @@ std::unique_ptr<CTLFormula> normalizeToCore(const CTLFormula& f) {
             // Already core 2-ary temporal operators:
             case Op::EU:
             case Op::AU:
-            case Op::EU_TILDE:
-            case Op::AU_TILDE: {
+            case Op::ER:
+            case Op::AR: {
                 auto L = normalizeToCore(*t->operand);
                 auto R = normalizeToCore(*t->second_operand);
                 return std::make_unique<TemporalFormula>(t->operator_, std::move(L), std::move(R));
@@ -227,8 +229,6 @@ std::unique_ptr<CTLFormula> normalizeToCore(const CTLFormula& f) {
     }
     throw std::runtime_error("Unknown formula node in normalizeToCore: " + f.toString());
 }
-
-// ---------- collect closure cl(φ) (state subformulas) ----------
 void collectClosureDFS(
     const CTLFormula& f,
     std::unordered_map<FormulaKey, const CTLFormula*, FormulaKeyHash>& seen,
@@ -236,31 +236,39 @@ void collectClosureDFS(
 ) {
     FormulaKey k{f};
     if (seen.count(k)) return;
-    // Recurse first to maintain a topological (constituents-first) order
 
-    if(f.getType() == FormulaType::BOOLEAN_LITERAL) 
-    {
-        seen.emplace(k, &f);
-        return;
-    }
+    // Mark early to avoid cycles
+    seen.emplace(k, &f);
 
+    // 1. Recurse over subformulas
     if (auto bin = dynamic_cast<const BinaryFormula*>(&f)) {
         collectClosureDFS(*bin->left,  seen, outTopo);
         collectClosureDFS(*bin->right, seen, outTopo);
-    } else if (auto t = dynamic_cast<const TemporalFormula*>(&f)) {
-        collectClosureDFS(*t->operand, seen, outTopo);
-        if (t->second_operand) collectClosureDFS(*t->second_operand, seen, outTopo);
-    } else if (auto n = dynamic_cast<const NegationFormula*>(&f)) {
-        if(n->operand->getType() == FormulaType::BOOLEAN_LITERAL){
-            seen.emplace(k, &f);
-            return;
-        }
-        collectClosureDFS(*n->operand, seen, outTopo);
-        
     }
-    // Now add this formula itself (state subformula)
-    seen.emplace(k, &f);
+    else if (auto t = dynamic_cast<const TemporalFormula*>(&f)) {
+        collectClosureDFS(*t->operand, seen, outTopo);
+        if (t->second_operand)
+            collectClosureDFS(*t->second_operand, seen, outTopo);
+    }
+    else if (auto n = dynamic_cast<const NegationFormula*>(&f)) {
+        // Since in NNF, this is always ¬atom
+        collectClosureDFS(*n->operand, seen, outTopo);
+    }
+
+    // 2. Add the formula itself
     outTopo.push_back(&f);
+
+    // 3. If this is an atomic formula, add its negation
+    if (auto a = dynamic_cast<const AtomicFormula*>(&f)) {
+        NegationFormula* neg = new NegationFormula(a->clone());
+        FormulaKey nk{*neg};
+        if (!seen.count(nk)) {
+            seen.emplace(nk, neg);
+            outTopo.push_back(neg);
+        }
+    }
+
+    // 4. If this is ¬p, ensure p is present (already covered by normal recursion)
 }
 
 
@@ -441,8 +449,8 @@ bool isGreatestFixpointBlock(const CTLFormulaPtr& formula){
         auto temp = std::dynamic_pointer_cast<TemporalFormula>(formula);
         if (temp) {
             switch (temp->operator_) {
-                case TemporalOperator::EU_TILDE:
-                case TemporalOperator::AU_TILDE:
+                case TemporalOperator::ER:
+                case TemporalOperator::AR:
                     return true;
                 default:
                     return false;
@@ -474,7 +482,7 @@ bool isLeastFixpointBlock(const CTLFormulaPtr& formula){
 bool isExistentialBlock(const CTLFormulaPtr& formula){
     if (formula->isTemporal()) {
         auto temp = std::dynamic_pointer_cast<TemporalFormula>(formula);
-        return temp->givesExistensialTransition();
+        return temp->givesExistentialTransition();
     }
     //if (formula->isBinary()) {
     //    auto bin = std::dynamic_pointer_cast<BinaryFormula>(formula);
@@ -513,15 +521,15 @@ SCCBlockType getSCCBlockTypeFromFormula(const CTLFormulaPtr& formula){
 
 #ifdef USE_Z3
 
-z3::expr conjToZ3Expr(const Conj& conj, z3::context& ctx) {
+z3::expr conjToZ3Expr(const Clause& conj, z3::context& ctx) {
     z3::expr result = ctx.bool_val(true);
-    for (const auto& atom : conj.atoms) {
-        z3::expr atom_expr = ctx.bool_const(atom.qnext.data());
+    for (const auto& literal : conj.literals) {
+        z3::expr atom_expr = ctx.bool_const(literal.qnext.data());
         result = result && atom_expr;
     }
     return result;
 }
-z3::expr disjToZ3Expr(const std::vector<Conj>& disj, z3::context& ctx) {
+z3::expr disjToZ3Expr(const std::vector<Clause>& disj, z3::context& ctx) {
     z3::expr result = ctx.bool_val(false);
     for (const auto& conj : disj) {
         z3::expr conj_expr = conjToZ3Expr(conj, ctx);
@@ -541,6 +549,7 @@ CTLFormulaPtr preprocessFormula(const CTLFormula& formula, bool remove_compariso
     // Step 0: Optionally remove comparisons (convert to atomic propositions)
     if (remove_comparisons) {
         current = ComparisonRemoverVisitor::convert(*current);
+        return current;
     }
     
     // Step 1: Convert binary operators to atoms where appropriate
@@ -564,6 +573,7 @@ CTLFormulaPtr negateFormula(const CTLFormula& formula, bool remove_comparisons)
     // Step 0: Optionally remove comparisons (convert to atomic propositions)
     if (remove_comparisons) {
         current = ComparisonRemoverVisitor::convert(*current);
+        return current;
     }
     
     // Negate the formula

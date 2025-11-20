@@ -170,6 +170,12 @@ add_test(NAME test_ctl_sat COMMAND test_ctl_sat)
 
 
 
+add_executable(test_satisfiability tests/test_satisfiability.cpp)
+target_link_libraries(test_satisfiability ctl_refine_lib GTest::gtest GTest::gtest_main)
+add_test(NAME test_satisfiability COMMAND test_satisfiability)
+
+
+
 ## Add other test executables
 #file(GLOB_RECURSE OTHER_TEST_SOURCES "tests/*.cpp")
 #if(OTHER_TEST_SOURCES)

@@ -23,20 +23,31 @@ public:
      * @param formula The formula string to check
      * @return true if the formula is satisfiable, false otherwise
      */
-    virtual bool isSatisfiable(const std::string& formula) const = 0;
+    virtual bool isSatisfiable(const std::string& formula, bool without_parsing = false) const = 0;
 
     /**
      * @brief Check if a conjunction of formulas is satisfiable
      * @param formulas A set of formula strings to check (implicitly AND-ed together)
      * @return true if the conjunction is satisfiable, false otherwise
      */
-    virtual bool isSatisfiable(const std::unordered_set<std::string>& formulas) const = 0;
+    virtual bool isSatisfiable(const std::unordered_set<std::string>& formulas, bool without_parsing = false) const = 0;
 
+    virtual bool isSatisfiable(void* formula) const = 0;
+    
     /**
      * @brief Create a clone of this SMT interface
      * @return A unique pointer to a new SMT interface instance
      */
     virtual std::unique_ptr<SMTInterface> clone() const = 0;
+
+
+     
+     virtual void* createAndSimplify(const std::string& formula) const =0;
+    virtual std::string simplify(const std::string& formula) const = 0;
+    virtual void* getFalse() const =0;
+    virtual void* getTrue() const =0;
+    virtual void* makeOr(void* left, void* right) const =0;
+    virtual void* makeAnd(void* left, void* right) const =0;
 };
 
 /**

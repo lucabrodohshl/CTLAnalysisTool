@@ -41,13 +41,13 @@ private:
     mutable std::unordered_map<std::shared_ptr<CTLProperty>, bool> refinement_cache_;
     
 public:
-    explicit CTLProperty(const std::string& formula_str);
+    explicit CTLProperty(const std::string& formula_str, bool encode_comparison =false);
     explicit CTLProperty(CTLFormulaPtr formula);
     ~CTLProperty() = default; // Let shared_ptr handle cleanup automatically
     
     // Factory method with caching
-    static std::shared_ptr<CTLProperty> create(const std::string& formula_str, bool verbose = false);
-    static std::shared_ptr<CTLProperty> create(CTLFormulaPtr formula, bool verbose = false);
+    static std::shared_ptr<CTLProperty> create(const std::string& formula_str, bool verbose = false, bool encode_comparison = false);
+    static std::shared_ptr<CTLProperty> create(CTLFormulaPtr formula, bool verbose = false, bool encode_comparison = false);
     
     // Memory management
     static void clearStaticCaches();

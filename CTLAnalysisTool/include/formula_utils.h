@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "transitions.h"
+
 // Conditional includes based on SMT solver
 #ifdef USE_Z3
 #include <z3++.h>
@@ -151,8 +153,8 @@ bool isUniversalBlock(const CTLFormulaPtr& formula);
 SCCBlockType getSCCBlockTypeFromFormula(const CTLFormulaPtr& formula);
 
 #ifdef USE_Z3
-z3::expr conjToZ3Expr(const Conj& conj, z3::context& ctx);
-z3::expr disjToZ3Expr(const std::vector<Conj>& disj, z3::context& ctx);
+z3::expr conjToZ3Expr(const Clause& conj, z3::context& ctx);
+z3::expr disjToZ3Expr(const std::vector<Clause>& disj, z3::context& ctx);
 #endif
 
 CTLFormulaPtr preprocessFormula(const CTLFormula& formula, bool remove_comparisons = false);

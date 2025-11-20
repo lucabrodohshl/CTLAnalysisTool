@@ -5,16 +5,20 @@
 
 using namespace ctl;
 
-std::shared_ptr<CTLProperty> makeProperty(const std::string& formula_str) {
-    auto p = std::make_shared<CTLProperty>(formula_str);
+std::shared_ptr<CTLProperty> makeProperty(const std::string& formula_str, bool encode_comparison = false) {
+    auto p = std::make_shared<CTLProperty>(formula_str, false);
     return p;
 }
 
 int main() {
+    bool encode_comparison = true;
     // Test the ABTAs for the failing language inclusion tests   
     std::vector<std::string> test_formulas = {
-        "E(false W (EG 3 <= extBus)) & (AF (2 <= extBus & (!(3 <= extBus))))", // should be non-empty
-       // "!(AG (!(((AltitudePossibleVal <= stp3) & (Speed_Right_Wheel <= P5)))))"
+        //"E(false W (EG 3 <= extBus)) & (AF (2 <= extBus & (!(2 <= extBus))))", // should be non-empty
+       "(AG (!(((AltitudePossibleVal <= stp3) & (Speed_Right_Wheel <= P5)))))",
+       //"AG(EF(p)) & AF(p)",
+       //"A(p R q)"
+       //"EG(p) & !AG(p)",
        
     };
     
@@ -23,7 +27,7 @@ int main() {
     std::streambuf* coutbuf = std::cout.rdbuf(); //save old buffer
     
     for (const auto& formula : test_formulas) {
-        auto prop = makeProperty(formula);
+        auto prop = makeProperty(formula, encode_comparison);
         
         //clean file
         log_file << "=========================\n";
@@ -32,16 +36,19 @@ int main() {
 
         std::cout << "Formula: " << formula << "\n";
         std::cout << "ABTA:\n" << prop->automaton().toString() << "\n";
-        std::cout << "Negated formula ABTA:\n" << prop->automaton().getNegatedFormula()->toString() << "\n";
-        std::cout << "Checking emptiness...\n";
-        bool empty = prop->automaton().isEmpty();
-        std::cout << "Formula EMPTY: " << (empty ? "YES" : "NO") << " = formula: "<< formula << "\n";
-        std::cout << "Expected: ";
+        auto a =  prop->automaton().buildGameGraph();
+        std::cout << "Game Graph:\n";
+        a.print();
+        //std::cout << "Negated formula ABTA:\n" << prop->automaton().getNegatedFormula()->toString() << "\n";
+        //std::cout << "Checking emptiness...\n";
+        //bool empty = prop->automaton().isEmpty();
+        //std::cout << "Formula EMPTY: " << (empty ? "YES" : "NO") << " = formula: "<< formula << "\n";
+        //std::cout << "Expected: ";
         
        
     }
     
-    std::cout << "Tests completed. Check 'test_abta_debug.log' for details.\n";
+    //std::cout << "Tests completed. Check 'test_abta_debug.log' for details.\n";
 
     
 

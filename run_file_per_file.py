@@ -15,7 +15,7 @@ def test_one_file(file_path, output_dir, timeout_h=10):
     cmd = ["./check_refinements", 
             file_path, "--use-extern-sat","MLSOLVER", 
             "--sat-path","./assets/extern//mlsolver-sat", 
-            "--parallel","-j","2",
+            "--no-parallel", "--verbose",
             "-o", output_dir ]
     print("Running command:", " ".join(cmd))
     mem_usage = 0
@@ -120,8 +120,8 @@ def load_or_create_file(output_dir):
     return output_csv_path, df
 
 
-files_dir = "./assets/benchmark/Dataset_lite/Rers2019Ind"
-output_base_dir = "test/rers2019_from_back"
+files_dir = "./assets/benchmark/Dataset_clean/"
+output_base_dir = "test/rersInd_last"
 
 
 output_dir_to_give_to_analysis = os.path.join(output_base_dir, "FileSpecific")

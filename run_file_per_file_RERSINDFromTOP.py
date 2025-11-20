@@ -15,7 +15,7 @@ def test_one_file(file_path, output_dir, timeout_h=10):
     cmd = ["./check_refinements", 
             file_path, "--use-extern-sat","MLSOLVER", 
             "--sat-path","./assets/extern//mlsolver-sat", 
-            "--parallel","-j","2",
+            "--no-parallel","--verbose",
             "-o", output_dir ]
     print("Running command:", " ".join(cmd))
     mem_usage = 0

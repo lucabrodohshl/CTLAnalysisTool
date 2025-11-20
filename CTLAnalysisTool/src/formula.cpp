@@ -154,8 +154,8 @@ std::string TemporalFormula::operatorToString() const {
         case TemporalOperator::AW: return "AW";
         case TemporalOperator::EX: return "EX";
         case TemporalOperator::AX: return "AX";
-        case TemporalOperator::EU_TILDE: return "ER";
-        case TemporalOperator::AU_TILDE: return "AR";
+        case TemporalOperator::ER: return "ER";
+        case TemporalOperator::AR: return "AR";
         default: return "?";
     }
 }
@@ -193,9 +193,9 @@ std::string TemporalFormula::toString() const {
             result = result.substr(0, 1) + "(" + firstStr + " U " + secondStr + ")";
         } else if (operator_ == TemporalOperator::EW || operator_ == TemporalOperator::AW) {
             result = result.substr(0, 1) + "(" + firstStr + " W " + secondStr + ")";
-        }else if (operator_ == TemporalOperator::EU_TILDE) {
+        }else if (operator_ == TemporalOperator::ER) {
             result = result.substr(0, 1) + "(" + firstStr + " R " + secondStr + ")";
-        }else if (operator_ == TemporalOperator::AU_TILDE) {
+        }else if (operator_ == TemporalOperator::AR) {
             result = result.substr(0, 1) + "(" + firstStr + " R " + secondStr + ")";
         }
     } else {

@@ -1,7 +1,11 @@
 sudo apt update
-sudo apt install build-essential cmake libz3-dev libstdc++6
+sudo apt install build-essential cmake libz3-dev libstdc++6 ocaml-dune opam
+opam update
+opam upgrade dune
 
-
+python3 -m venv venv
+source venv/bin/activate
+pip install psutil tqdm pandas matplotlib seaborn pyyaml
 
 
 

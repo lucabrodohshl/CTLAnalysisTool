@@ -1,5 +1,6 @@
 
 #include "CTLautomaton.h"
+#include "formula.h"
 #include <queue>
 #include <algorithm>
 #include <iostream>
@@ -7,353 +8,440 @@
 namespace ctl {
 
     
-      bool CTLAutomaton::isEmpty() const {
-        if (verbose_) std::cout << "Checking emptiness of formula: " << getRawFormula() << "\n";
-        if (this->getFormula()->hash() == FALSE_HASH) return true;
-        if (this->getFormula()->hash() == TRUE_HASH)  return false;
-
-        //local_guard_cache_.clear();
-        if (!blocks_) {
-            std::cerr << "Warning: SCC blocks not computed yet. Computing now.\n";
-            blocks_ = std::make_unique<SCCBlocks>(__computeSCCs());
-            __decideBlockTypes();
-        }
-
-        auto topo = __getTopologicalOrder();
-        std::reverse(topo.begin(), topo.end());
-
-        std::unordered_map<std::string_view, std::vector<Move>> state_to_moves;
-        // Pre-allocate space to avoid rehashing
-        state_to_moves.reserve(v_states_.size());
-
-        std::vector<std::unordered_set<std::string_view>> Good(blocks_->size());
-
-        for (int B : topo) {
-            const auto& info = blocks_->getBlockInfo(B);
-            const auto& statesInB = blocks_->blocks[B];
-            bool isNu = info.isGreatestFixedPoint();
-            bool isMu = info.isLeastFixedPoint();
-
-            std::unordered_set<std::string_view> S;
-
-            auto block_info = blocks_->getBlockInfo(B);
-            bool block_is_universal = block_info.isUniversal();
-            if (block_info.isSimple()) {
-                //We need to identify what the other blocks are. 
-                // We first check the order
-                auto& pred = __getDAG()[B];
-                bool total_existential_blocks = true;
-                if (!pred.empty()) {
-                    for (auto p : pred) {
-                        if (blocks_->getBlockInfo(p).isUniversal()) {
-                            total_existential_blocks = false;
-                            break;
-                        }
-                    }
-                }
-                block_is_universal = !total_existential_blocks;
-
-            }
-
-            // --- ν-block: start full and shrink
-            if (isNu) {
-                S.insert(statesInB.begin(), statesInB.end());
-                bool changed = true;
-                while (changed) {
-                    std::unordered_set<std::string_view> Snext;
-                    for (auto q : statesInB)
-                        if (__existsSatisfyingTransition(q, B, S, Good, block_is_universal, state_to_moves))
-                            Snext.insert(q);
-                    changed = (Snext != S);
-                    S = std::move(Snext);
-                }
-            }
-
-            // --- μ-block: start empty and grow
-            else if (isMu) {
-                S.clear();
-                bool changed = true;
-                while (changed) {
-                    std::unordered_set<std::string_view> Snext = S;
-                    for (auto q : statesInB)
-                        if (__existsSatisfyingTransition(q, B, S, Good, block_is_universal, state_to_moves))
-                            Snext.insert(q);
-                    changed = (Snext != S);
-                    S = std::move(Snext);
-                }
-            }
-
-            // --- simple block: one-shot evaluation (no iteration)
-            else {
-                for (auto q : statesInB)
-                    if (__existsSatisfyingTransition(q, B, {}, Good, block_is_universal, state_to_moves))
-                        S.insert(q);
-            }
-
-            Good[B] = S;
-
-        }
-
-        int b0 = blocks_->getBlockId(initial_state_);
-        bool nonempty = Good[b0].count(initial_state_) > 0;
-        return !nonempty;
+    bool CTLAutomaton::isEmpty() const {
+        throw std::runtime_error("isEmpty() not implemented yet");
     }
 
-
-bool CTLAutomaton::__existsSatisfyingTransition(
-    std::string_view q,
-    int curBlock,
-    const std::unordered_set<std::string_view>& in_block_ok,
-    const std::vector<std::unordered_set<std::string_view>>& goodStates,
-    bool block_is_universal,
-    std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves
-) const {
-
-    auto base_moves = __getMovesInternalFiltered(q, state_to_moves, curBlock, in_block_ok, goodStates);
-
-    // For each move, check if it's satisfiable AND its next-states are acceptable
-    std::cout << "Dealing with "<< base_moves.size() <<" moves for state "<< std::string(q) << "\n";
-    for (const auto& move : base_moves) {
-        std::cout << move.toString() << "\n";
-    }
-    bool found_satisfying = false;
+    // ==================== Helper Functions for Formula Manipulation ====================
     
-    //#pragma omp parallel for schedule(dynamic) shared(found_satisfying)
-    for (size_t i = 0; i < base_moves.size(); ++i) {
-        // Early exit if another thread found a solution
-        if (found_satisfying) continue;
+    Guard CTLAutomaton::makeTrue() const {
+        Guard g;
+        g.pretty_string = "true";
+        g.sat_expr = (void*)smt_interface_->getTrue();
+        return g;
+    }
+    
+    Guard CTLAutomaton::makeFalse() const {
+        Guard g;
+        g.pretty_string = "false";
+        g.sat_expr = (void*)smt_interface_->getFalse();
+        return g;
+    }
+    
+    Guard CTLAutomaton::makeOr(const Guard& left, const Guard& right) const {
+        // Simplifications
+        if (isEquivalentToTrue(left)) return left;
+        if (isEquivalentToTrue(right)) return right;
+        if (isEquivalentToFalse(left)) return right;
+        if (isEquivalentToFalse(right)) return left;
+        Guard g;
+        g.pretty_string = "(" + left.pretty_string + " | " + right.pretty_string + ")";
+        g.sat_expr = smt_interface_->makeOr(left.sat_expr, right.sat_expr);
+        return g;
+    }
+    
+    Guard CTLAutomaton::makeAnd(const Guard& left, const Guard& right) const {
+
+        // Simplifications
+        if (isEquivalentToFalse(left)) return left;
+        if (isEquivalentToFalse(right)) return right;
+        if (isEquivalentToTrue(left)) return right;
+        if (isEquivalentToTrue(right)) return left;
         
-        const auto& move = base_moves[i];
+        Guard g;
+        g.pretty_string = "(" + left.pretty_string + " & " + right.pretty_string + ")";
+        g.sat_expr = smt_interface_->makeAnd(left.sat_expr, right.sat_expr);
+        return g;
+    }
+    
+    bool CTLAutomaton::isEquivalentToTrue(const Guard& g) const {
+        return std::hash<std::string>{}(g.pretty_string) == TRUE_HASH; 
+    }
+    
+    bool CTLAutomaton::isEquivalentToFalse(const Guard& g) const {
+         return std::hash<std::string>{}(g.pretty_string) == TRUE_HASH; 
+    }
+
+    
+    bool CTLAutomaton::winningRegionsEqual(const WinningRegion& a, const WinningRegion& b) const {
+        if (a.size() != b.size()) return false;
         
-        // Step 1: Check if atoms are satisfiable (CRITICAL SECTION - not thread-safe)
-        bool atoms_satisfiable;
-        //#pragma omp critical(isSatisfiable)
-        //{
-            atoms_satisfiable = __isSatisfiable(move.atoms);
-        //}
-        
-        if (!atoms_satisfiable) {
-            continue;
+        for (const auto& [state, g_a] : a) {
+            auto it = b.find(state);
+            if (it == b.end()) return false;
+            
+            // Compare formulas (simplified comparison)
+            const auto& g_b = it->second;
+            if (!(g_a==g_b)) return false;
         }
-        
-        // Step 2: Handle terminal moves (no next states) - these are always OK if atoms are SAT
-        if (move.next_states.empty()) {
-            //#pragma omp atomic write
-            std::cout << "Found satisfying terminal move for state " << std::string(q) << "\n";
-            found_satisfying = true;
-            continue;
+        return true;
+    }
+
+    // ==================== Core Algorithm: Symbolic Predecessor ====================
+    
+    // Evaluate a single clause: conjunction of (direction, next_state) pairs
+    Guard CTLAutomaton::evaluateClause(const Clause& clause, const WinningRegion& target_region) const {
+        Guard result = makeTrue();
+        std::cout << "    Evaluating clause with " << clause.literals.size() << " literals" << std::endl;
+        // A clause is a conjunction: (dir1, q1) ∧ (dir2, q2) ∧ ...
+        for (const auto& literal : clause.literals) {
+            std::string_view next_state = literal.qnext;
+            
+            // Get the winning formula for the next state from the target region
+            auto it = target_region.find(next_state);
+            Guard next_formula = (it != target_region.end()) ? it->second : makeFalse();
+            
+            // Conjoin with the result
+            result = makeAnd(result, next_formula);
         }
 
-        // Step 3: Check next-states based on block type (universal vs existential)
-        bool next_states_ok = false;
-
-        std::array<std::vector<std::string_view>, 2> dir_to_states;
-        for (const auto& ns : move.next_states) {
-            if(ns.dir==-1) continue;
-            dir_to_states[ns.dir].push_back(ns.state);
-        }
-        std::cout << " Is block universal? " << (block_is_universal ? "YES" : "NO") << "\n";
         
-        if (block_is_universal) {
-            // UNIVERSAL (A / AND): ALL next states must be in good sets
-            next_states_ok = true; // assume all are good until proven otherwise
-            // we group states by the direction
-            
-            // for each direction, we must ensure that
-            // 1. both states are in good blocks
-            // 2. the atoms from those states (-1) are conjunction compatible
-            bool isNu = blocks_->isGreatestFixedPoint(curBlock);
-            for (const auto& statesAtDir : dir_to_states) {
-                if (statesAtDir.empty()) continue;
-                std::unordered_set<std::string> accumGuard;
-                for (const auto& s : statesAtDir) {
-                    auto it = state_to_moves.find(s);
-                    if (it == state_to_moves.end()) {
-                        continue;
-                    }
-                    for (const auto& mv : it->second) {
-                        // (a) check obligations of this move
-                        bool obligationsOK = true;
-                        for (const auto& ns : mv.next_states) {
-                            if (ns.dir == -1) continue; // local handled elsewhere
-                            int tb = blocks_->getBlockId(ns.state);
-                            if (tb == curBlock) {
-                                
-                                if (isNu && !in_block_ok.count(ns.state))
-                                    { obligationsOK = false; break; }
-                            } else {
-                                if (tb < 0 || tb >= (int)goodStates.size() ||
-                                    !goodStates[tb].count(ns.state))
-                                    { obligationsOK = false; break; }
-                            }
-                        }
-                        if (!obligationsOK) {
-                            next_states_ok = false;
-                            goto exit_universal;
-                        }
-                        std::cout << "    Adding atoms from state " << std::string(s) << ": ";
-                        for (const auto& a : mv.atoms) {
-                            std::cout << a << " ";
-                        }
-                        std::cout << "\n";
-                        __appendGuard(accumGuard, mv.atoms);
-                    }
-                }
-                
-                // Check satisfiability (CRITICAL SECTION - not thread-safe)
-                bool guard_satisfiable;
-                std::cout << "  Checking accumulated guard for direction " << (statesAtDir.empty() ? -1 : move.next_states.find({0, statesAtDir[0]})->dir) << ": ";
-                for (const auto& a : accumGuard) {
-                    std::cout << a << " ";
-                }
-                std::cout << "\n";
-                //#pragma omp critical(isSatisfiable)
-                //{
-                    guard_satisfiable = __isSatisfiable(accumGuard);
-                //}
-                
-                if (!guard_satisfiable) {
-                    std::cout << "  Guard not satisfiable, failing universal condition.\n";
-                    next_states_ok = false;
-                    goto exit_universal;
-                }
-            }
-            exit_universal:;
-            
+        return result;
+    }
+    
+    // Evaluate a transition edge: guard ∧ (clause1 ∨ clause2 ∨ ...)
+    Guard CTLAutomaton::evaluateRule(const SymbolicGameEdge& edge, const WinningRegion& target_region) const {
+        // Parse the guard into a formula
+        Guard guard;
+        std::cout << "Evaluating rule with guard: " << edge.symbol.toString() << std::endl;
+        if (edge.symbol == makeTrue()) {
+            std::cout << "  Guard is TRUE" << std::endl;
+            guard = makeTrue();
+        } else if (edge.symbol == makeFalse()) {
+            guard = makeFalse();
         } else {
-            // EXISTENTIAL (E / OR): AT LEAST ONE next state must be in good sets
-            next_states_ok = false; // assume none are good until we find one
+            std::cout << "  Guard is neither TRUE nor FALSE: " << edge.symbol.pretty_string << std::endl;
+            guard = edge.symbol;
+        }
+        
+        // If guard is false, the entire transition is impossible
+        if (isEquivalentToFalse(guard)) {
+            std::cout << "  Guard is FALSE, transition impossible" << std::endl;
+            return makeFalse();
+        }
+        
+        // Evaluate the DNF: clause1 ∨ clause2 ∨ ...
+        Guard dnf_result = makeFalse();
+        for (const auto& clause : edge.clauses) {
+            Guard clause_formula = evaluateClause(clause, target_region);
+            std::cout << "  Evaluating clause, result: " << clause_formula.pretty_string << std::endl;
+            dnf_result = makeOr(dnf_result, clause_formula);
+        }
+        
+        // Combine: guard ∧ DNF
+        return makeAnd(guard, dnf_result);
+    }
+    
+    // Compute the one-step predecessor: all states that can reach the target in one step
+    WinningRegion CTLAutomaton::symPre(const SymbolicParityGame& game, const WinningRegion& target_region) const {
+        WinningRegion pre_region;
+        
+        // For each state in the game
+        for (const auto& [state, node] : game.nodes) {
+            // Get all outgoing edges from this state
+            const auto& edges = game.getEdgesFrom(state);
             
-            for (const auto& ns : move.next_states) {
-                std::cout << "  Checking next state " << std::string(ns.state) << " dir=" << ns.dir << "\n";
-                bool this_state_ok = false;
-                
-                int target_block = blocks_->getBlockId(ns.state);
-                
-                if (target_block == curBlock) {
-                    // Within same block
-                    bool isNu = blocks_->isGreatestFixedPoint(curBlock);
-                    if (isNu) {
-                        this_state_ok = in_block_ok.count(ns.state) > 0;
-                    } else {
-                        // μ-block: optimistic
-                        //this_state_ok = true;
-                        this_state_ok = false;
-                    }
-                } else {
-                    // Different block
-                    if (target_block >= 0 && target_block < (int)goodStates.size()) {
-                        this_state_ok = goodStates[target_block].count(ns.state) > 0;
-                    }
-                }
-                
-                if (this_state_ok) {
-                    next_states_ok = true;
-                    break; // Found one good state, that's enough for existential
-                }
-            }
-        }
-
-        // If this move is satisfiable AND its next-states are OK, we found a valid transition
-        if (next_states_ok) {
-            #pragma omp atomic write
-            found_satisfying = true;
-        }
-    }
-    std::cout << "Here" << std::string(q) << " found_satisfying=" << found_satisfying << "\n";
-    return found_satisfying;
-}
-
-// Helper functions for per-child joint realizability
-bool CTLAutomaton::__isSatisfiableUnion(const std::unordered_set<std::string>& base, const std::unordered_set<std::string>& add) const {
-    std::unordered_set<std::string> combined = base;
-    combined.insert(add.begin(), add.end());
-    return __isSatisfiable(combined);
-}
-
-void CTLAutomaton::__appendGuard(std::unordered_set<std::string>& base, const std::unordered_set<std::string>& add) const {
-    base.insert(add.begin(), add.end());
-}
-
-
-
-
-/*
-
-bool CTLAutomaton::__childConjunctionEnabled(
-    const std::vector<std::string_view>& statesAtChild,
-    int curBlock,
-    const std::unordered_set<std::string_view>& in_block_ok,
-    const std::vector<std::unordered_set<std::string_view>>& goodStates
-) const {
-    
-    
-
-     // Multiple required states at one child
-    std::unordered_set<std::string> accumGuard;
-    //if (block_is_universal) {
-    for (const auto& s : statesAtChild) {
-        auto it = m_expanded_transitions_.find(s);
-        if (it == m_expanded_transitions_.end()) {
-            continue;
-        }
-        for (const auto& mv : it->second) {
-            // (a) check obligations of this move
-            bool obligationsOK = true;
-            for (const auto& ns : mv.next_states) {
-                if (ns.dir == -1) continue; // local handled elsewhere
-                int tb = blocks_->getBlockId(ns.state);
-                if (tb == curBlock) {
-                    bool isNu = blocks_->isGreatestFixedPoint(curBlock);
-                    if (isNu && !in_block_ok.count(ns.state))
-                        { obligationsOK = false; break; }
-                } else {
-                    if (tb < 0 || tb >= (int)goodStates.size() ||
-                        !goodStates[tb].count(ns.state))
-                        { obligationsOK = false; break; }
-                }
-            }
-            if (!obligationsOK) return false;
-            __appendGuard(accumGuard, mv.atoms);
-        }
-    }
-    if (!__isSatisfiable(accumGuard)) {
-        return false;
-    }
-    return true;
-
-    
-}
-
-
-
-*/
-
-
-
-std::vector<std::unordered_set<int>>& CTLAutomaton::__getDAG() const
-{
-    if (!block_edges_.empty()) {
-        return block_edges_;
-    }
-
-    std::vector<std::unordered_set<int>> block_edges(blocks_->size());
-    for (int i = 0; i < (int)blocks_->size(); ++i) {
-        for (const auto& st : blocks_->blocks[i]) {
-            auto it = state_successors_.find(st);
-            if (it == state_successors_.end()) {
-                block_edges[i] = {};
+            if (edges.empty()) {
+                // No outgoing edges: cannot reach target
+                pre_region[state] = makeFalse();
                 continue;
             }
-            //block_edges[i] = {};
-            for (const auto& succ : it->second) {
-                int bj = blocks_->getBlockId(succ);
-                if (bj != i) block_edges[i].insert(bj);
+            
+            // Build the predecessor formula based on the player ownership
+            Guard state_formula = makeFalse();
+            
+            if (node.owner == Player::Player1_Eloise) {
+                // Player 1's turn: needs at least ONE edge to reach target (OR)
+                for (const auto& edge : edges) {
+                    Guard edge_formula = evaluateRule(edge, target_region);
+                    state_formula = makeOr(state_formula, edge_formula);
+                }
+            } else {
+                // Player 2's turn: ALL edges must lead to target (AND)
+                state_formula = makeTrue();
+                for (const auto& edge : edges) {
+                    Guard edge_formula = evaluateRule(edge, target_region);
+                    state_formula = makeAnd(state_formula, edge_formula);
+                }
+            }
+            
+            pre_region[state] = state_formula;
+        }
+        
+        return pre_region;
+    }
+
+    // ==================== Attractor Algorithm (Least Fixed-Point) ====================
+    
+    WinningRegion CTLAutomaton::symbolicAttractor(const SymbolicParityGame& game, 
+                                                   const WinningRegion& target, 
+                                                   Player sigma) const {
+        WinningRegion attractor = target;
+        
+        if (verbose_) {
+            std::cout << "Computing symbolic attractor for player " 
+                      << (sigma == Player::Player1_Eloise ? "Eloise" : "Abelard") << std::endl;
+        }
+        
+        int iteration = 0;
+        while (true) {
+            iteration++;
+            WinningRegion prev_attractor = attractor;
+            std::cout << "  Attractor iteration " << iteration << std::endl;
+
+            // Compute one-step predecessors
+            WinningRegion predecessors = symPre(game, attractor);
+            
+            // Update attractor based on player ownership
+            for (const auto& [state, node] : game.nodes) {
+                
+                    attractor[state] = makeOr(attractor[state], predecessors[state]);
+                
+            }
+            
+            // Check for fixed point
+            if (winningRegionsEqual(attractor, prev_attractor)) {
+                if (verbose_) {
+                    std::cout << "  Attractor converged after " << iteration << " iterations" << std::endl;
+                }
+                break;
+            }
+            
+            if (iteration > 1000) {
+                throw std::runtime_error("Attractor computation did not converge after 1000 iterations");
             }
         }
+        
+        return attractor;
     }
-    block_edges_ = std::move(block_edges);
-    return block_edges_;
+    
+    // ==================== Trap Computation (Greatest Fixed-Point) ====================
+    
+    // Computes the largest set of states from which Player sigma can force the game
+    // to stay within the 'domain' forever
+    WinningRegion CTLAutomaton::symbolicTrap(const SymbolicParityGame& game,
+                                             const WinningRegion& domain,
+                                             Player sigma) const {
+        WinningRegion trap = domain;
+        
+        if (verbose_) {
+            std::cout << "Computing trap for player " 
+                      << (sigma == Player::Player1_Eloise ? "Eloise" : "Abelard") << std::endl;
+        }
+        
+        int iteration = 0;
+        while (true) {
+            iteration++;
+            WinningRegion prev_trap = trap;
+            
+            // Compute predecessors that stay within the current trap
+            WinningRegion predecessors = symPre(game, trap);
+            
+            // A state stays in the trap if it was there before AND
+            // the player can force to stay in the trap
+            for (const auto& [state, node] : game.nodes) {
+                // The state must have been in the trap
+                Guard in_trap = trap[state];
+                
+                // AND the player must be able to move within the trap
+                Guard can_stay = predecessors[state];
+                
+                trap[state] = makeAnd(in_trap, can_stay);
+            }
+            
+            // Check for fixed point
+            if (winningRegionsEqual(trap, prev_trap)) {
+                if (verbose_) {
+                    std::cout << "  Trap converged after " << iteration << " iterations" << std::endl;
+                }
+                break;
+            }
+            
+            if (iteration > 1000) {
+                throw std::runtime_error("Trap computation did not converge after 1000 iterations");
+            }
+        }
+        
+        return trap;
+    }
 
-}
+    // ==================== Main Solver: Nested Fixed-Point for Büchi Games ====================
+    
+    std::pair<WinningRegion, WinningRegion> CTLAutomaton::symbolicSolveRecursive(const SymbolicParityGame& game) const {
+        WinningRegion W_0, W_1;
+        
+        // BASE CASE: If there are no states, return empty winning regions
+        if (game.nodes.empty()) {
+            if (verbose_) {
+                std::cout << "Base case: empty game" << std::endl;
+            }
+            return {W_0, W_1};
+        }
+        
+        if (verbose_) {
+            std::cout << "\n=== Solving Büchi game with " << game.nodes.size() << " states ===" << std::endl;
+        }
+        
+        // W will be the winning region for Player 0 (Eloise).
+        // Initialize it optimistically to all 'true'.
+        WinningRegion W;
+        for (const auto& [state, node] : game.nodes) {
+            W[state] = makeTrue();
+        }
+        
+        // OUTER LOOP: Greatest Fixed-Point for the overall winning region W.
+        // This is the main loop that converges to the largest set from which Eloise can win.
+        int iteration = 0;
+        while (true) {
+            iteration++;
+            if (verbose_) {
+                std::cout << "\n--- Outer GFP Iteration " << iteration << " ---" << std::endl;
+            }
+            
+            WinningRegion W_prev = W;
+            
+            // Step 1: Define the target set for this iteration:
+            //         It's the set of accepting states (priority 0) that are
+            //         still considered part of the winning region W.
+            // BUG FIX 1: Target is priority 0 (even = accepting), not priority 1!
+            WinningRegion target;
+            for (const auto& [state, node] : game.nodes) {
+                if (node.priority == 0) {  // Priority 0 = even = accepting/good
+                    target[state] = W[state];
+                } else {
+                    target[state] = makeFalse();
+                }
+            }
+            std::cout << "Target states for this iteration:" << std::endl;
+            for (const auto& [state, formula] : target) {
+                if (!isEquivalentToFalse(formula)) {
+                    std::cout << "  State: " << state << " Formula: " << formula.pretty_string << std::endl;
+                }
+            }
+            
+            // Step 2: Compute the attractor to this target.
+            //         The attractor function itself is a least fixed-point computation (inner LFP).
+            //         This computes the set of states from which Eloise can FORCE a visit
+            //         to an accepting state within the current winning region W.
+            WinningRegion attractor = symbolicAttractor(game, target, Player::Player1_Eloise);
+            
+            // Step 3: The new winning region is this attractor.
+            //         BUG FIX 2: W = attractor, not W = trap(attractor).
+            //         Any state not in the attractor is a state from which Eloise cannot
+            //         guarantee reaching an accepting state, so it's a losing state.
+            W = attractor;
+            
+            // Check for convergence of the outer GFP loop.
+            if (winningRegionsEqual(W, W_prev)) {
+                if (verbose_) {
+                    std::cout << "Outer GFP loop converged after " << iteration << " iterations." << std::endl;
+                }
+                break;
+            }
+            
+            if (iteration > 100) {
+                throw std::runtime_error("Outer fixed-point did not converge after 100 iterations");
+            }
+        }
+        
+        // The final W is the winning region for Player 0 (Eloise)
+        W_0 = W;
+        
+        // Player 1 (Abelard) wins where Player 0 does not.
+        // Symbolically: W_1[state] = NOT W_0[state]
+        for (const auto& [state, node] : game.nodes) {
+            // For now, we compute the complement symbolically
+            // If W_0[state] is true, then W_1[state] is false, and vice versa
+            if (isEquivalentToTrue(W_0[state])) {
+                W_1[state] = makeFalse();
+            } else if (isEquivalentToFalse(W_0[state])) {
+                W_1[state] = makeTrue();
+            } else {
+                // For complex formulas, we would need makeNot()
+                // For now, just set to false (conservative: we only care about W_0 for satisfiability)
+                W_1[state] = makeFalse();
+            }
+        }
+        
+        return {W_0, W_1};
+    }
+    
+    // ==================== Top-Level Function: CTL Satisfiability Check ====================
+    
+    bool CTLAutomaton::checkCtlSatisfiability() const {
+        if (verbose_) {
+            std::cout << "\n========================================" << std::endl;
+            std::cout << "Starting CTL Satisfiability Check" << std::endl;
+            std::cout << "========================================\n" << std::endl;
+        }
+        
+        // Step 1: Build the symbolic parity game from the automaton
+        SymbolicParityGame game = buildGameGraph();
+        
+        if (verbose_) {
+            std::cout << "Built symbolic parity game with " << game.nodes.size() << " nodes" << std::endl;
+        }
+        
+        // Step 2: Solve the game recursively
+        auto [W_0, W_1] = symbolicSolveRecursive(game);
+        
+        // Step 3: Get the winning formula for Player 0 (Eloise) at the initial state
+        std::string_view initial_state = game.initial_state;
+        Guard winning_formula = W_0[initial_state];
+        
+        if (verbose_) {
+            std::cout << "\n========================================" << std::endl;
+            std::cout << "Winning formula for initial state: " << std::endl;
+
+            std::cout << winning_formula.pretty_string << std::endl;
+            std::cout << "========================================\n" << std::endl;
+        }
+        
+        // Step 4: THE SMT SOLVER CALL
+        // Check if there exists any valuation that makes this formula true
+        if (isEquivalentToFalse(winning_formula)) {
+            return false;  // Trivially unsatisfiable
+        }
+        
+        if (isEquivalentToTrue(winning_formula)) {
+            return true;   // Trivially satisfiable
+        }
+        
+        bool is_sat = __isSatisfiable(winning_formula);
+        
+        if (verbose_) {
+            std::cout << "SMT solver result: " << (is_sat ? "SATISFIABLE" : "UNSATISFIABLE") << std::endl;
+        }
+        
+        return is_sat;
+    }
+
+
+
+
+    std::vector<std::unordered_set<int>>& CTLAutomaton::__getDAG() const
+    {
+        if (!block_edges_.empty()) {
+            return block_edges_;
+        }
+
+        std::vector<std::unordered_set<int>> block_edges(blocks_->size());
+        for (int i = 0; i < (int)blocks_->size(); ++i) {
+            for (const auto& st : blocks_->blocks[i]) {
+                auto it = state_successors_.find(st);
+                if (it == state_successors_.end()) {
+                    block_edges[i] = {};
+                    continue;
+                }
+                //block_edges[i] = {};
+                for (const auto& succ : it->second) {
+                    int bj = blocks_->getBlockId(succ);
+                    if (bj != i) block_edges[i].insert(bj);
+                }
+            }
+        }
+        block_edges_ = std::move(block_edges);
+        return block_edges_;
+
+    }
 }

@@ -57,7 +57,7 @@ size_t OrTransitionExpr::hash() const {
 }
 
 std::string NotTransitionExpr::toString() const {
-    return "!" + expr->toString();
+    return "!(" + expr->toString() + ")";
 }
 
 TransitionExprPtr NotTransitionExpr::clone() const {

@@ -53,9 +53,11 @@ std::string MLSolverParser::getAtomIdentifier(const std::string& atom) {
         return it->second;
     }
     
-    // Create a new identifier for this atom
-    // Format: p_1, p_2, p_3, etc.
-    std::string identifier = "p_" + std::to_string(next_atom_id_);
+    std::string identifier;
+    bool is_number = !atom.empty() &&
+                     std::all_of(atom.begin(), atom.end(), ::isdigit);
+    if (is_number) identifier = atom;
+    else identifier = "p" + std::to_string(next_atom_id_);
     next_atom_id_++;
     atom_map_[atom] = identifier;
     return identifier;
@@ -63,9 +65,12 @@ std::string MLSolverParser::getAtomIdentifier(const std::string& atom) {
 
 std::string MLSolverParser::convertFormula(const CTLFormula& formula) {
     // Handle comparison formulas - map to unique atoms
-    if (auto comp = dynamic_cast<const ComparisonFormula*>(&formula)) {
-        std::string comparison_str = comp->toString();
-        return getComparisonAtom(comparison_str);
+    if (auto f = dynamic_cast<const ComparisonFormula*>(&formula)) {
+        std::string left  = getAtomIdentifier(f->variable);
+        std::string right = getAtomIdentifier(f->value);
+        std::string tag   = f->tagToOp();
+
+        return left+tag+right;
     }
     
     // Handle boolean literals (true/false)

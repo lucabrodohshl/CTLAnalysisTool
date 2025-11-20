@@ -29,7 +29,7 @@ class SMTInterface;
  */
 struct SymbolicTransition {
     std::string guard;
-    std::vector<Conj> disjuncts;
+    std::vector<Clause> disjuncts;
 };
 
 /**
@@ -76,7 +76,7 @@ private:
 
     // Evaluate a single disjunct (conjunction of obligations)
     bool evaluateConjunct(
-        const Conj& conjunct,
+        const Clause& conjunct,
         const std::unordered_set<std::string>& guard_atoms,
         int current_block,
         const std::unordered_set<std::string_view>& in_block_good,

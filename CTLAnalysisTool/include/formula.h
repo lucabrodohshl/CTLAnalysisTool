@@ -65,9 +65,12 @@ public:
     std::string variable;
     std::string operator_;
     std::string value;
+
+
     
     ComparisonFormula(const std::string& var, const std::string& op, const std::string& val)
         : variable(var), operator_(op), value(val) {
+            
         }
     
     std::string toString() const override { 
@@ -81,6 +84,20 @@ public:
     CTLFormulaPtr clone() const override {
         return std::make_shared<ComparisonFormula>(variable, operator_, value);
     }
+
+    std::string tagToOp() const
+    {
+        if (operator_ == "<=") return "Leq";
+        if (operator_ == ">=") return "Geq";
+        if (operator_ == "<" ) return "Lt";
+        if (operator_ == ">" ) return "Gt";
+        if (operator_ == "=" ) return "Eq";
+        if (operator_ == "!=") return "Neq";
+        throw std::runtime_error("Unknown comparison operator");
+    }
+    
+
+
     
     bool equals(const CTLFormula& other) const override;
     size_t hash() const override;
@@ -190,20 +207,24 @@ public:
     bool isBinary() const override { return second_operand != nullptr; }
     bool isUnary() const override { return second_operand == nullptr; }
     
+    // This function should identify operators whose semantic expansion
+    // begins with a conjunction (∧), giving the move to Player 2 (Abelard).
     bool givesUniversalTransition() const {
-        return operator_ ==  TemporalOperator::AU_TILDE || operator_ == TemporalOperator::AX ||  operator_ == TemporalOperator::AU ;
-        
-                //operator_ == TemporalOperator::AF || operator_ == TemporalOperator::AG ||
-               //operator_ == TemporalOperator::AU || operator_ == TemporalOperator::AW ||
-               //operator_ == TemporalOperator::AX || operator_ == TemporalOperator::AU_TILDE;
+        return operator_ == TemporalOperator::AG || // ψ ∧ AX(AG ψ)
+            operator_ == TemporalOperator::AX || // ∧ over successors
+            operator_ == TemporalOperator::AR || // χ ∧ (ψ ∨ AX(AR ...))
+            operator_ == TemporalOperator::EG || // ψ ∧ EX(EG ψ)  <- Note: EG is universal-like!
+            operator_ == TemporalOperator::ER;  // χ ∧ (ψ ∨ EX(ER ...))
     }
-    
-    bool givesExistensialTransition() const {
-        return operator_ == TemporalOperator::EU || operator_ == TemporalOperator::EX || operator_ == TemporalOperator::EU_TILDE ;
-        
-                //operator_ == TemporalOperator::EF || operator_ == TemporalOperator::EG ||
-               //operator_ == TemporalOperator::EU || operator_ == TemporalOperator::EW ||
-               //operator_ == TemporalOperator::EX || operator_ == TemporalOperator::EU_TILDE;
+
+    // This function should identify operators whose semantic expansion
+    // begins with a disjunction (∨), giving the move to Player 1 (Eloise).
+    bool givesExistentialTransition() const {
+        return operator_ == TemporalOperator::AF || // ψ ∨ AX(AF ψ) <- Note: AF is existential-like!
+            operator_ == TemporalOperator::AU || // χ ∨ (ψ ∧ AX(AU ...))
+            operator_ == TemporalOperator::EF || // ψ ∨ EX(EF ψ)
+            operator_ == TemporalOperator::EU || // χ ∨ (ψ ∧ EX(EU ...))
+            operator_ == TemporalOperator::EX;  // ∨ over successors
     }
 
     FormulaType getType() const override { return FormulaType::TEMPORAL; }

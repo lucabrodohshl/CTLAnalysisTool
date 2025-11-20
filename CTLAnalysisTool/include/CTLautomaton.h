@@ -17,7 +17,9 @@
 #include "types.h"
 #include "SCCBlocks.h"
 #include "SMTInterface.h"
+#include "game_graph.h"
 
+#include "transitions.h"
 
 namespace ctl {
 
@@ -58,9 +60,11 @@ public:
 
 
     void addEdge(const std::string_view from, const std::string_view to);
-    void addDNF(const std::string_view from,
+    void addTransition(const std::string_view from,
                              const std::string& guard,
-                             const std::vector<Conj>& disjuncts);
+                             const std::vector<Clause>& clauses,
+                             bool is_dnf = true);
+
     std::string_view getStateOfFormula(const CTLFormula& f) const;
     bool isAccepting(const std::string_view state_name) const;
     
@@ -68,7 +72,7 @@ public:
     CTLFormulaPtr getFormula() const;
     CTLFormulaPtr getNegatedFormula() const;
 
-    std::unordered_map<std::string_view, std::vector<Move>> getExpandedTransitions() const;
+    std::unordered_map<std::string_view, std::vector<Move>> getExpandedTransitions() const {throw std::runtime_error("getExpandedTransitions() not implemented yet"); }
 
     std::string getRawFormula() const { return s_raw_formula_; }
     std::string getRawNegation() const { return "!(" + s_raw_formula_ + ")"; }
@@ -82,17 +86,18 @@ public:
         return std::make_unique<CTLAutomaton>(*getNegatedFormula());
     }
 
-    std::vector<Move> transitionToDNF(const std::vector<CTLTransitionPtr>& transitions, bool with_atom_collection = false) const;
-    std::unordered_map<std::string_view, std::vector<Move>> getMoves() const;
     
     // Public wrapper for satisfiability checking (for OTF product construction)
-    bool isSatisfiable(const std::unordered_set<std::string>& g) const { return __isSatisfiable(g); }
+    bool isSatisfiable(const std::unordered_set<std::string>& g, bool without_parsing = false) const { return __isSatisfiable(g, without_parsing); }
 
-    std::vector<Move> getMoves(std::string_view q, std::unordered_map<std::string_view, std::vector<Move>>& moves_cache) const {
-        return __getMovesInternal(q, moves_cache);
-    }
     bool verbose() const { return verbose_; }
     void setVerbose(bool v) { verbose_ = v; }
+
+    // Build a symbolic parity game from the automaton
+    SymbolicParityGame buildGameGraph() const;
+
+    bool checkCtlSatisfiability() const;
+    
 private:
     CTLFormulaPtr p_original_formula_;
     CTLFormulaPtr p_negated_formula_;
@@ -137,27 +142,37 @@ private:
       std::string __handleProp (const std::string& proposition, bool symbolic);
       void __handleStatesAndTransitions(bool symbolic);
       std::vector<std::vector<std::string_view>> __computeSCCs() const;
-      bool __isSatisfiable (const std::string& g) const;
-      bool __isSatisfiable(const std::unordered_set<std::string>& g) const ;
+      bool __isSatisfiable (const std::string& g, bool without_parsing = false) const;
+      bool __isSatisfiable(const std::unordered_set<std::string>& g, bool without_parsing = false) const ;
+      bool __isSatisfiable(const Guard& g) const ;
+      void __handleORTransition(const std::shared_ptr<BinaryFormula>& bin, const CTLStatePtr& state);
+      void __handleAXTransition(const std::shared_ptr<TemporalFormula>& bin, const CTLStatePtr& state);
+      inline void __addFalseTransition(std::string_view s) { addTransition(s, GFalse, { Clause{ {} } }); };
+      inline void __addTrueTransition(std::string_view s) { addTransition(s, GTrue, { Clause{ {} } }); };
+      inline void __addTrueTransition(std::string_view s, const std::vector<Clause>& clauses) {
+          addTransition(s, GTrue, clauses);
+      };
+      Guard createGuardFromString(const std::string& guard) const;
       void __clean();
   
-      // ∃: is there some transition with a satisfiable guard and some conjunct that works?
-        bool __existsSatisfyingTransition(
-            std::string_view q,
-            int curBlock,
-            const std::unordered_set<std::string_view>& in_block_ok,
-            const std::vector<std::unordered_set<std::string_view>>& goodStates,
-            bool block_is_universal,
-            std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves
-        ) const;
+        // Symbolic parity game solver functions
+        WinningRegion symPre(const SymbolicParityGame& game, const WinningRegion& target_region) const;
+        Guard evaluateRule(const SymbolicGameEdge& edge, const WinningRegion& target_region) const;
+        Guard evaluateClause(const Clause& clause, const WinningRegion& target_region) const;
+        WinningRegion symbolicAttractor(const SymbolicParityGame& game, const WinningRegion& target, Player sigma) const;
+        WinningRegion symbolicTrap(const SymbolicParityGame& game, const WinningRegion& domain, Player sigma) const;
+        std::pair<WinningRegion, WinningRegion> symbolicSolveRecursive(const SymbolicParityGame& game) const;
         
-        bool __childConjunctionEnabled(
-            const std::vector<std::string_view>& statesAtChild,
-            int curBlock,
-            const std::unordered_set<std::string_view>& in_block_ok,
-            const std::vector<std::unordered_set<std::string_view>>& goodStates
-        ) const;
         
+        // Helper functions for formula manipulation
+        Guard makeOr(const Guard& left, const Guard& right) const;
+        Guard makeAnd(const Guard& left, const Guard& right) const;
+        Guard makeTrue() const;
+        Guard makeFalse() const;
+        bool isEquivalentToTrue(const Guard& g) const;
+        bool isEquivalentToFalse(const Guard& g) const;
+        bool winningRegionsEqual(const WinningRegion& a, const WinningRegion& b) const;
+
         bool __isSatisfiableUnion(const std::unordered_set<std::string>& base, const std::unordered_set<std::string>& add) const;
         void __appendGuard(std::unordered_set<std::string>& base, const std::unordered_set<std::string>& add) const;
         
@@ -204,32 +219,6 @@ private:
         std::vector<int>& __getTopologicalOrder() const;
         std::vector<std::unordered_set<int>>& __getDAG() const;
         
-
-        std::vector<Move> __getMovesInternal(const std::string_view state_name,
-        std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves) const;
-        void expandMoveRevisited(const Move& move, 
-                                   const std::string_view current_state,
-                                   std::unordered_map<std::string_view, 
-                                   std::vector<Move>>& state_to_moves,
-                                   std::vector<Move>* fully_expanded_moves
-                                ) const;
-        
-        // Optimized versions that filter based on good blocks during expansion
-        std::vector<Move> __getMovesInternalFiltered(
-            const std::string_view state_name,
-            std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
-            int curBlock,
-            const std::unordered_set<std::string_view>& in_block_ok,
-            const std::vector<std::unordered_set<std::string_view>>& goodStates) const;
-        
-        void expandMoveRevisitedFiltered(
-            const Move& move,
-            const std::string_view current_state,
-            std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
-            std::vector<Move>* fully_expanded_moves,
-            int curBlock,
-            const std::unordered_set<std::string_view>& in_block_ok,
-            const std::vector<std::unordered_set<std::string_view>>& goodStates) const;
 
 };
 

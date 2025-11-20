@@ -144,10 +144,10 @@ CTLFormulaPtr Parser::parse_temporal() {
                 TemporalOperator op;
                 if (op_token.value == "E") {
                     op = (token_val == "U") ? TemporalOperator::EU : 
-                        (token_val == "W") ? TemporalOperator::EW : TemporalOperator::EU_TILDE;
+                        (token_val == "W") ? TemporalOperator::EW : TemporalOperator::ER;
                 } else {
                     op = (token_val == "U") ? TemporalOperator::AU : 
-                        (token_val == "W") ? TemporalOperator::AW : TemporalOperator::AU_TILDE;
+                        (token_val == "W") ? TemporalOperator::AW : TemporalOperator::AR;
                 }
                 
                 return std::make_shared<TemporalFormula>(op, first, second);
@@ -285,8 +285,8 @@ TemporalOperator Parser::token_to_temporal_operator(TokenType type) {
         case TokenType::AW: return TemporalOperator::AW;
         case TokenType::EX: return TemporalOperator::EX;
         case TokenType::AX: return TemporalOperator::AX;
-        case TokenType::ER: return TemporalOperator::EU_TILDE;
-        case TokenType::AR: return TemporalOperator::AU_TILDE;
+        case TokenType::ER: return TemporalOperator::ER;
+        case TokenType::AR: return TemporalOperator::AR;
         default: throw ParseException("Invalid temporal operator");
     }
 }

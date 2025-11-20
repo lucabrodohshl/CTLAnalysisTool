@@ -15,7 +15,7 @@ def test_one_file(file_path, output_dir, timeout_h=10):
     cmd = ["./check_refinements", 
             file_path, "--use-extern-sat","MLSOLVER", 
             "--sat-path","./assets/extern//mlsolver-sat", 
-            "--parallel","-j","2",
+            "--parallel", "-j", "2",
             "-o", output_dir ]
     print("Running command:", " ".join(cmd))
     mem_usage = 0
@@ -121,14 +121,14 @@ def load_or_create_file(output_dir):
 
 
 files_dir = "./assets/benchmark/Dataset_lite/MCC"
-output_base_dir = "test/MCC_from_back"
+output_base_dir = "test/MCC_from_top"
 
 
 output_dir_to_give_to_analysis = os.path.join(output_base_dir, "FileSpecific")
 if not os.path.exists(output_dir_to_give_to_analysis):
     os.makedirs(output_dir_to_give_to_analysis)
 files = sorted(os.listdir(files_dir))
-files = [f for f in files if f.endswith(".txt")][::-1]
+files = [f for f in files if f.endswith(".txt")]
 middle = len(files) // 2
 print(f"Total files to process: {len(files)}. Starting from middle index: {middle}, file: {files[middle]}")
 

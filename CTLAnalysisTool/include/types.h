@@ -13,6 +13,17 @@
 #include <unordered_set>
 #include <chrono>
 
+#ifdef USE_Z3
+#include <z3++.h>
+using sat_expr= z3::expr; 
+#endif
+#ifdef USE_CVC5
+#include <cvc5/cvc5.h>
+using sat_expr = cvc5::Term;
+#endif
+
+
+
 namespace ctl
 {
     
@@ -129,7 +140,7 @@ enum class BinaryOperator {
 
 // Temporal operators
 enum class TemporalOperator {
-    EF, AF, EG, AG, EU, AU, EW, AW, EX, AX, EU_TILDE, AU_TILDE
+    EF, AF, EG, AG, EU, AU, EW, AW, EX, AX, ER, AR
 };
 
 
@@ -145,8 +156,8 @@ static std::string temporalOperatorToString(TemporalOperator op) {
         case TemporalOperator::AW: return "AW";
         case TemporalOperator::EX: return "EX";
         case TemporalOperator::AX: return "AX";
-        case TemporalOperator::EU_TILDE: return "ER";
-        case TemporalOperator::AU_TILDE: return "AR";
+        case TemporalOperator::ER: return "ER";
+        case TemporalOperator::AR: return "AR";
         default: return "UNKNOWN_TEMPORAL_OP";
     }
 }
@@ -156,23 +167,11 @@ struct CTLState {
         std::string name;
         CTLFormulaPtr formula;
     };
-struct Atom { int dir; std::string_view qnext; };    // (dir, q')
-struct Conj {  std::vector<Atom> atoms; };       // ∧ of atoms
-using FromToPair = std::pair<std::string_view, std::string_view>;
 
-struct CTLTransition { 
-        std::string guard; 
-        std::vector<Conj> disjuncts; // guard ∧ (∨ Conj)
-        std::string_view from;
 
-        CTLTransition() = default;
-        CTLTransition(const std::string& g, const std::vector<Conj>& d,
-                      std::string_view f)
-            : guard(g), disjuncts(d), from(f) {}
-    }; 
 
 using CTLStatePtr = std::shared_ptr<CTLState>;
-using CTLTransitionPtr = std::shared_ptr<CTLTransition>;
+
 
 
 
@@ -310,6 +309,18 @@ static std::string AvailableCTLSATInterfacesToString(AvailableCTLSATInterfaces o
         default: return "UNKNOWN";
     }
 }
+
+
+enum class ComparisonOp {
+    LEQ,
+    GEQ,
+    LT,
+    GT,
+    EQ,
+    NEQ,
+    UNKNOWN
+};
+
 
 
 

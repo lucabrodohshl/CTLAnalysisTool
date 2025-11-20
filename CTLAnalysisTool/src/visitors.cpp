@@ -87,7 +87,7 @@ void AtomCollectorVisitor::visit(const TemporalFormula& formula) {
 
 void NNFConverterVisitor::visit(const AtomicFormula& formula) {
     if (negate_) {
-        result_ = std::make_shared<AtomicFormula>("!" + formula.toString());
+        result_ = std::make_shared<AtomicFormula>("!(" + formula.toString() + ")");
     } else {
         result_ = formula.clone();
     }
@@ -239,7 +239,7 @@ void NNFConverterVisitor::visit(const TemporalFormula& formula) {
                 break;
             }
 
-            case TemporalOperator::EU_TILDE: {
+            case TemporalOperator::ER: {
                 // ¬Ẽ[φ Ũ ψ] ≡ A[¬ψ W (¬φ ∧ ¬ψ)]
                 if (formula.second_operand) {
                     auto neg_phi = convert(*formula.operand, true);
@@ -248,12 +248,12 @@ void NNFConverterVisitor::visit(const TemporalFormula& formula) {
                     result_ = std::make_shared<TemporalFormula>(TemporalOperator::AW, neg_psi, neg_phi_and_neg_psi);
                 }
                 else{
-                    throw std::runtime_error("ENFConverterVisitor::visit(EU_TILDE): missing second operand");
+                    throw std::runtime_error("ENFConverterVisitor::visit(ER): missing second operand");
                 }
                 break;
             }
 
-            case TemporalOperator::AU_TILDE: {
+            case TemporalOperator::AR: {
                 // ¬Ã[φ Ũ ψ] ≡ E[¬ψ W (¬φ ∧ ¬ψ)]
                 if (formula.second_operand) {
                     auto neg_phi = convert(*formula.operand, true);
@@ -261,7 +261,7 @@ void NNFConverterVisitor::visit(const TemporalFormula& formula) {
                     auto neg_phi_and_neg_psi = std::make_shared<BinaryFormula>(neg_phi, BinaryOperator::AND, neg_psi);
                     result_ = std::make_shared<TemporalFormula>(TemporalOperator::EW, neg_psi, neg_phi_and_neg_psi);
                 }else{
-                    throw std::runtime_error("ENFConverterVisitor::visit(AU_TILDE): missing second operand");
+                    throw std::runtime_error("ENFConverterVisitor::visit(AR): missing second operand");
                 }
                 
                 break;
@@ -773,10 +773,15 @@ void ComparisonRemoverVisitor::visit(const AtomicFormula& f) {
 }
 
 void ComparisonRemoverVisitor::visit(const ComparisonFormula& f) {
-    // Convert comparison to simple atomic proposition like "p0", "p1", etc.
-    std::string original = f.toString();
-    std::string simple_name = getSimpleName(original);
-    result_ = std::make_shared<AtomicFormula>(simple_name);
+    // Produce canonical name
+    
+    std::string left  = getSimpleName(f.variable);
+    std::string right = getSimpleName(f.value);
+    std::string tag   = f.tagToOp();
+
+    
+
+    result_ = std::make_shared<AtomicFormula>(left+tag+right);
 }
 
 void ComparisonRemoverVisitor::visit(const BooleanLiteral& f) {

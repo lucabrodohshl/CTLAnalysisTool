@@ -12,17 +12,15 @@ namespace ctl {
 
   void CTLAutomaton::buildFromFormula(const CTLFormula& formula, bool symbolic) {
     if (verbose_) std::cout << "Building automaton from formula: " << formula.toString() << "\n";
-    p_original_formula_ = std::move(formula_utils::preprocessFormula(formula, true));
+    p_original_formula_ = std::move(formula_utils::preprocessFormula(formula, false));
     if (verbose_) std::cout << "Converted formula: " << p_original_formula_->toString() << "\n";
-    p_negated_formula_ = std::move(formula_utils::negateFormula(formula,     true));
+    p_negated_formula_ = std::move(formula_utils::negateFormula(formula,     false));
     smt_interface_ = createDefaultSMTInterface();
     __buildFromFormula( false);
     blocks_ = std::make_unique<SCCBlocks>(__computeSCCs());
 
     
-    __decideBlockTypes();
-    //blocks_->print();
-    //m_expanded_transitions_ = getMoves();
+    //__decideBlockTypes();
   }
 
 
@@ -45,7 +43,7 @@ namespace ctl {
         v_states_.push_back(state);
         initial_state_ = state->name;
         formula_hash_to_state_cache_[p_original_formula_->hash()] = state->name;
-        addDNF(state->name, GTrue, { Conj{ { /* empty */ } } });
+        addTransition(state->name, GTrue, { Clause{ { /* empty */ } } });
         return;
     }
 
@@ -58,16 +56,16 @@ namespace ctl {
         v_states_.push_back(state);
         initial_state_ = state->name;
         formula_hash_to_state_cache_[p_original_formula_->hash()] = state->name;
-        addDNF(state->name, GFalse, { Conj{ { /* empty */ } } });
+        __addFalseTransition(state->name);
         return;
     }
 
     std::unordered_map<formula_utils::FormulaKey, const CTLFormula*, formula_utils::FormulaKeyHash> seen;
-    std::vector<const CTLFormula*> topo;
-    collectClosureDFS(*p_original_formula_, seen, topo);
+    std::vector<const CTLFormula*> subs;
+    collectClosureDFS(*p_original_formula_, seen, subs);
     //std::cout << "Total subformulas collected: " << topo.size() << std::endl;
     // Create one state per subformula
-    for (const CTLFormula* sf : topo) {
+    for (const CTLFormula* sf : subs) {
         auto state = std::make_shared<CTLState>();
         state->name = "q" + std::to_string(v_states_.size());
         state->formula = sf->clone();
@@ -77,8 +75,16 @@ namespace ctl {
             //m_state_operator_[state->name] = static_cast<const BinaryFormula*>(sf)->operator_;
             m_state_operator_[state->name] = static_cast<const BinaryFormula*>(sf)->operator_;
         }
-    }
 
+        if (sf->getType() == FormulaType::TEMPORAL) {
+            auto t = static_cast<const TemporalFormula*>(sf);
+            if (t->operator_ == TemporalOperator::AU || t->operator_ == TemporalOperator::EU) 
+                continue; // this is a waiting state, it is not accepting
+             s_accepting_states_.insert(state->name);
+        }else{
+            s_accepting_states_.insert(state->name);
+        }
+    }
     // 3) Handle state transitions
     __handleStatesAndTransitions(symbolic);
 
@@ -94,30 +100,50 @@ void CTLAutomaton::__clean() {
     throw std::runtime_error("CTLAutomaton::__clean not implemented yet.");
 }
 
-bool CTLAutomaton::__isSatisfiable(const std::string& g) const {
+bool CTLAutomaton::__isSatisfiable(const std::string& g, bool without_parsing) const {
     if (!smt_interface_) {
         throw std::runtime_error("SMT interface not initialized");
     }
 
-    bool r= smt_interface_->isSatisfiable(g);
-    std::cout << "Checking satisfiability of: " << g << " => " << (r ? "SAT" : "UNSAT") << "\n";
+    bool r= smt_interface_->isSatisfiable(g, without_parsing);
     return r;
 }
 
 
-bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) const {
+bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g, bool without_parsing) const {
     if (!smt_interface_) {
         throw std::runtime_error("SMT interface not initialized");
     }
-    return smt_interface_->isSatisfiable(g);
+    return smt_interface_->isSatisfiable(g, without_parsing);
 }
 
+Guard CTLAutomaton::createGuardFromString(const std::string& guard) const{
+    if (!smt_interface_) {
+        throw std::runtime_error("SMT interface not initialized");
+    }
+    Guard g;
+    g.pretty_string = guard;
+    g.sat_expr = nullptr;  // Not using the pointer due to Z3 lifetime issues
+    
+    // Check satisfiability - if UNSAT, replace with "false"
+    if (!__isSatisfiable(guard, false)) {
+        g.pretty_string = GFalse;
+        return g;
+    }
+    
+    return g;
+}
 
 
   std::string CTLAutomaton::__handleProp (const std::string& proposition, bool symbolic){
         // If symbolic=true we can decide satisfiability now; else keep the prop (or "true") per your needs
         //if (!symbolic) return proposition.empty() ? "true" : proposition;
         //return proposition.empty() ? "" : proposition;
+        //bool sat = __isSatisfiable(proposition);
+        //if (!sat) return "false";
+        //return proposition.empty() ? "" : proposition;
+        if (std::hash<std::string>{}(proposition) == TRUE_HASH) return "true";
+        if (std::hash<std::string>{}(proposition) == FALSE_HASH) return "false";
         bool sat = __isSatisfiable(proposition);
         if (!sat) return "false";
         return proposition.empty() ? "" : proposition;
@@ -125,6 +151,521 @@ bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) con
         //return sat ? "true" : "false";
     };
 
+
+
+
+  void CTLAutomaton::addEdge(const std::string_view from, const std::string_view to) {
+        state_successors_[from].insert(to);
+        
+    };
+
+    // Record graph edges and store exactly ONE transition (guard + clauses).
+  void CTLAutomaton::addTransition(const std::string_view from,
+                             const std::string& guard,
+                             const std::vector<Clause>& clauses,
+                             bool is_dnf) {
+      // Record edges for SCCs
+ 
+      auto& succs = state_successors_[from];
+      for (const auto& c : clauses) {
+          for (const auto& a : c.literals) {
+              succs.insert(a.qnext); // ok if duplicates; SCC code can tolerate or you can dedup
+          }
+      }
+      // Single transition object
+      CTLTransitionPtr t = std::make_shared<CTLTransition>();
+        t->guard     = createGuardFromString(guard);
+        t->clauses = clauses;
+        t->is_dnf = is_dnf;
+        t->from      = from;
+        m_transitions_[from].push_back(std::move(t));
+//
+      //
+      //t->guard     = createGuardFromString(guard);
+      //t->clauses = clauses;
+      //t->from      = from;
+      //m_transitions_[from].push_back(std::move(t));
+  };
+
+
+  void CTLAutomaton::__handleORTransition(const std::shared_ptr<BinaryFormula>& bin, const CTLStatePtr& state)
+  {
+        auto leftType  = bin->left->getType();
+        auto rightType = bin->right->getType();
+        // false/true simplifications
+        if (leftType == FormulaType::BOOLEAN_LITERAL) {
+            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->left);
+            if (b->value) {
+                // true ∨ x = true
+                __addTrueTransition(state->name);
+                return;
+            } 
+        }
+        if (rightType == FormulaType::BOOLEAN_LITERAL) {
+            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->right);
+            if (b->value) {
+                __addTrueTransition(state->name);
+                return;
+            }
+        }
+        // If either side is 'false', drop it (q ∨ false = q)
+        std::vector<Clause> clauses;
+        if (!(leftType == FormulaType::BOOLEAN_LITERAL &&
+            !std::dynamic_pointer_cast<BooleanLiteral>(bin->left)->value)) {
+            std::string_view s_left = getStateOfFormula(*bin->left);
+            clauses.push_back(Clause{ { { -1, s_left } } });
+        }
+        if (!(rightType == FormulaType::BOOLEAN_LITERAL &&
+            !std::dynamic_pointer_cast<BooleanLiteral>(bin->right)->value)) {
+            std::string_view s_right = getStateOfFormula(*bin->right);
+            clauses.push_back(Clause{ { { -1, s_right } } });
+        }
+        if (clauses.empty()) {
+            // both sides false → δ = false
+            addTransition(state->name, GFalse, { Clause{ {} } });
+        } else {
+            __addTrueTransition(state->name, clauses);
+        }
+  }
+
+
+  void CTLAutomaton::__handleAXTransition(const std::shared_ptr<TemporalFormula>& bin, const CTLStatePtr& state)
+  {
+        if (bin->operand->getType() == FormulaType::BOOLEAN_LITERAL) {
+            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->operand);
+            if (!b->value) {
+                // AX false = false
+                addTransition(state->name, GFalse, { Clause{ {} } });
+                return;
+            } else {
+                // AX true = true
+                __addTrueTransition(state->name);
+                return;
+            }
+        }
+        std::string_view sub = getStateOfFormula(*bin->operand);
+        addTransition(state->name, GTrue, { Clause{ { { L, sub }, { R, sub } } } });
+  }
+
+  void CTLAutomaton::__handleStatesAndTransitions(bool symbolic)
+  {
+
+    std::queue<CTLStatePtr> worklist;
+    std::unordered_set<std::string_view> processed_states;
+    // Initial population of the worklist
+    for (const auto& state : v_states_) {
+        worklist.push(state);
+    }
+    while (!worklist.empty()) {
+        auto state = worklist.front();
+        worklist.pop();
+        if (processed_states.find(state->name) != processed_states.end()) {
+            continue; // already processed
+        }
+        processed_states.insert(state->name);
+        FormulaType t = state->formula->getType();
+        
+        
+        switch (t) {
+            case FormulaType::BOOLEAN_LITERAL: {
+                auto b = std::dynamic_pointer_cast<BooleanLiteral>(state->formula);
+                if (b->value) {
+                    // δ(q) := true   (clauses may be empty; treat as one empty conj under guard=true)
+                    addTransition(state->name, GTrue, { Clause{ { /* empty */ } } });
+                } else {
+                    // false: no satisfiable transition, or guard=false
+                    addTransition(state->name, GFalse, { Clause{ {} } }); // harmless; existsSatisfyingTransition will skip
+                }
+                break;
+            }
+            case FormulaType::ATOMIC: 
+            {
+                auto a = std::dynamic_pointer_cast<AtomicFormula>(state->formula);
+                addTransition(state->name, a->proposition, { Clause{ {} } });
+                break;
+            }
+            case FormulaType::NEGATION: 
+              {
+                  auto n = std::dynamic_pointer_cast<NegationFormula>(state->formula);
+                  if (auto atom = std::dynamic_pointer_cast<AtomicFormula>(n->operand)) {
+                      addTransition(state->name, "!(" + atom->proposition + ")", { Clause{ {} } });
+                      break;
+                  }
+                  // Handle other negations if needed
+                  throw std::runtime_error("Unhandled negation formula in builder: " + state->name + " : " + state->formula->toString());
+                  break;
+              }
+
+            case FormulaType::BINARY: 
+              {
+                auto bin =  std::dynamic_pointer_cast<BinaryFormula>(state->formula);
+                switch (bin->operator_) {
+                    case BinaryOperator::AND: {
+                        auto leftType  = bin->left->getType();
+                        auto rightType = bin->right->getType();
+
+                        // true/false simplifications
+                        if (leftType == FormulaType::BOOLEAN_LITERAL) {
+                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->left);
+                            if (!b->value) {
+                                // left = false → whole conj = false
+                               __addFalseTransition(state->name); 
+                                break;
+                            } // if true → skip left, use right only
+                        }
+
+                        if (rightType == FormulaType::BOOLEAN_LITERAL) {
+                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->right);
+                            if (!b->value) {
+                               __addFalseTransition(state->name);
+                                break;
+                            }
+                        }
+
+                        // If either side is 'true', drop it (q ∧ true = q)
+                        std::string_view s_left, s_right;
+                        if (!(leftType == FormulaType::BOOLEAN_LITERAL &&
+                            std::dynamic_pointer_cast<BooleanLiteral>(bin->left)->value)) {
+                            s_left = getStateOfFormula(*bin->left);
+                        }
+                        if (!(rightType == FormulaType::BOOLEAN_LITERAL &&
+                            std::dynamic_pointer_cast<BooleanLiteral>(bin->right)->value)) {
+                            s_right = getStateOfFormula(*bin->right);
+                        }
+
+                        // If both sides reduced away (true ∧ true)
+                        if (s_left.empty() && s_right.empty()) {
+                            __addTrueTransition(state->name); // δ = true
+                        } else if (s_left.empty()) {
+                            addTransition(state->name, GTrue, { Clause{ { { -1, s_right } } } });
+                        } else if (s_right.empty()) {
+                            addTransition(state->name, GTrue, { Clause{ { { -1, s_left } } } });
+
+                        } else {
+                            // normal case: φ ∧ ψ
+                            addTransition(state->name, GTrue,
+                                { Clause{ { { -1, s_left }, { -1, s_right } } } });
+
+                        }
+                        break;
+                    }
+
+
+                    case BinaryOperator::OR: {
+                        __handleORTransition(bin, state);
+                        break;
+                    }
+
+                    default:
+                        throw std::runtime_error("Unsupported binary operator in builder");
+                }
+    
+              }
+              break;
+              // Temporal core, 
+              // For now, AU and EU and AR and ER do not use AX, EX inside the self loops, but directly reference the state itself.
+            case FormulaType::TEMPORAL: 
+              {
+                using Op = TemporalOperator;
+                auto t = std::dynamic_pointer_cast<TemporalFormula>(state->formula);
+                switch (t->operator_) {
+                    // AX φ  :  ∧_{c∈{L,R}} next(c, φ)
+                    case Op::AX: {
+                        __handleAXTransition(t, state);
+                        break;
+                    }
+                    // EX φ  :  ∨_{c∈{L,R}} next(c, φ)
+                    case Op::EX: {
+                        if (t->operand->getType() == FormulaType::BOOLEAN_LITERAL) {
+                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(t->operand);
+                            if (!b->value) {
+                                // AX false = false
+                               __addFalseTransition(state->name);
+                                break;
+                            } else {
+                                // AX true = true
+                                __addTrueTransition(state->name);
+                                break;
+                            }
+                        }
+                        std::string_view sub = getStateOfFormula(*t->operand);
+                        addTransition(state->name, GTrue, { Clause{ { { L, sub } } }, Clause{ { { R, sub } } } });
+                        break;
+                    }
+                    // A(φ U ψ) : ψ  ∨  (φ ∧ AX self)
+                    case Op::AU: {
+                        std::vector<Clause> clauses;
+
+                        const auto& phi = *t->operand;
+                        const auto& psi = *t->second_operand;
+
+                        bool phi_true  = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
+                        bool phi_false = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
+                        bool psi_true  = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
+                        bool psi_false = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
+
+                        // Simplify trivial cases
+                        if (psi_true) {
+                            // A(φ U true) = true
+                            __addTrueTransition(state->name);
+                            break;
+                        }
+                        if (psi_false && phi_false) {
+                            // A(false U false) = false
+                           __addFalseTransition(state->name);
+                            break;
+                        }
+                        if (phi_false && !psi_false) {
+                            // A(false U ψ) = ψ
+                            std::string_view s_psi = getStateOfFormula(psi);
+                            clauses.push_back(Clause{ { { -1, s_psi } } });
+                            __addTrueTransition(state->name, clauses);
+                            break;
+                        }
+                        if (psi_false && !phi_false) {
+                            // A(φ U false) = false
+                           __addFalseTransition(state->name);
+                            break;
+                        }
+
+                        // (1) Immediate satisfaction: ψ
+                        if (!psi_false) {
+                            std::string_view s_psi = getStateOfFormula(psi);
+                            clauses.push_back(Clause{ { { -1, s_psi } } });
+                        }
+
+                        // (2) Continue case: φ ∧ AX self  (universal next)
+                        if (!phi_false) {
+                            Clause cont;
+                            if (!phi_true) {
+                                std::string_view s_phi = getStateOfFormula(phi);
+                                cont.literals.push_back({ -1, s_phi });
+                            }
+                            // universal next: both branches must satisfy A(φ U ψ)
+                            cont.literals.push_back({ L, state->name });
+                            cont.literals.push_back({ R, state->name });
+                            clauses.push_back(std::move(cont));
+                        }
+
+                        if (clauses.empty())
+                           __addFalseTransition(state->name);
+                        else
+                            __addTrueTransition(state->name, clauses);
+                        break;
+                    }
+
+                    // E(φ U ψ) : ψ  ∨  (φ ∧ EX self)  = ψ  ∨  (φ ∧ next(L,self)) ∨ (φ ∧ next(R,self))
+                    case Op::EU: {
+                        std::vector<Clause> clauses;
+
+                        const auto& phi = *t->operand;
+                        const auto& psi = *t->second_operand;
+
+                        bool phi_true  = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
+                        bool phi_false = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
+                        bool psi_true  = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
+                        bool psi_false = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
+                        
+
+                        //std::cout << "Handling E(φ U ψ) for state " << state->name << " with φ=" << phi.toString() << " and ψ=" << psi.toString() << "\n";
+                        // Simplify special cases
+                        if (psi_true) {  // E(φ U true) = true
+                            __addTrueTransition(state->name);
+                            break;
+                        }
+                        if (psi_false && phi_false) {  // E(false U false) = false
+                           __addFalseTransition(state->name);
+                            break;
+                        }
+
+                        if (phi_false && !psi_false) {
+                            // E(false U ψ) = ψ
+                            std::string_view s_psi = getStateOfFormula(psi);
+                            clauses.push_back(Clause{ { { -1, s_psi } } });
+                            __addTrueTransition(state->name, clauses);
+                            break;
+                        }
+
+                        if(psi_false){
+                            // E(φ U false) = false
+                           __addFalseTransition(state->name);
+                            break;
+                        }
+
+                        // (1) Immediate satisfaction: ψ
+                        if (!psi_false) {
+                            std::string_view s_psi = getStateOfFormula(psi);
+                            clauses.push_back(Clause{ { { -1, s_psi } } });
+                        }
+
+                        // (2) Continuation: φ ∧ EX self
+                        if (!phi_false) {
+                            if (phi_true) {
+                                // true ∧ EX self = EX self
+                                clauses.push_back(Clause{ { { L, state->name } } });
+                                clauses.push_back(Clause{ { { R, state->name } } });
+                            } else {
+                                std::string_view s_phi = getStateOfFormula(phi);
+                                clauses.push_back(Clause{ { { -1, s_phi }, { L, state->name } } });
+                                clauses.push_back(Clause{ { { -1, s_phi }, { R, state->name } } });
+                            }
+                        }
+
+                        if (clauses.empty())
+                           __addFalseTransition(state->name);
+                        else
+                            __addTrueTransition(state->name, clauses);
+                        break;
+                    }
+
+                    case Op::AR: {
+                    // A(φ R ψ)  ≡  ψ ∧ (φ ∨ AX self)
+
+                    const auto& phi = t->operand;
+                    const auto& psi = t->second_operand;
+                    
+                    // Handle Trivial Cases
+                    bool psi_false = (psi->getType() == FormulaType::BOOLEAN_LITERAL &&
+                                    !std::dynamic_pointer_cast<BooleanLiteral>(psi)->value);
+                    if (psi_false) {
+                        // A(φ R false) = false
+                       __addFalseTransition(state->name);
+                        break;
+                    }
+
+                    // Create the Helper State for the Disjunctive Part
+                    // The helper state represents the sub-formula `(φ ∨ AX self)`.
+                    
+                    // NOTE: 't' is the shared_ptr to the current TemporalFormula A(φ R ψ).
+
+
+                    auto helper_ax_formula = std::make_shared<TemporalFormula>(TemporalOperator::AX, t->clone());
+
+                    auto helper_or_formula = std::make_shared<BinaryFormula>(
+                        phi->clone(),
+                        BinaryOperator::OR,
+                        helper_ax_formula
+                    );
+
+                    std::string s_helper_ax_name = state->name + "_ax";
+                    auto new_state_ax = std::make_shared<CTLState>(CTLState{ s_helper_ax_name, helper_ax_formula->clone() });
+                    v_states_.push_back(new_state_ax);
+                    formula_hash_to_state_cache_[helper_ax_formula->hash()] = new_state_ax->name;
+
+
+                    std::string s_helper_or_name = state->name + "_or";
+                    auto new_state_or = std::make_shared<CTLState>(CTLState{ s_helper_or_name, helper_or_formula->clone() });
+                    v_states_.push_back(new_state_or);
+                    formula_hash_to_state_cache_[helper_or_formula->hash()] = new_state_or->name;
+
+
+
+                    worklist.push(new_state_ax);
+                    worklist.push(new_state_or);
+
+                    //  Build the Transition for the Current AR State
+                    // This transition is a CNF, which we model as a DNF with a single conjunct.
+                    // This is Player 2's move.
+                    
+                    Clause single_conjunct;
+
+                    // 2a. Add the first obligation: ψ must hold.
+                    std::string_view s_psi = getStateOfFormula(*psi);
+                    single_conjunct.literals.push_back({ -1, s_psi });
+
+                    // 2b. Add the second obligation: a move to the helper state.
+                    single_conjunct.literals.push_back({ -1, new_state_or->name });
+
+                    // 2c. Add the final transition for the AR state.
+                    // It's a DNF with ONE disjunct (our single conjunct).
+                    addTransition(state->name, GTrue, { std::move(single_conjunct) });
+
+                    break;
+}
+                    // E(φ Ũ ψ) : ψ ∧ (φ ∨ EX self) = (ψ ∧ φ) ∨ (ψ ∧ next(L,self)) ∨ (ψ ∧ next(R,self))
+                    case Op::ER: {
+                        // E(φ Ũ ψ) = ψ ∧ (φ ∨ EX self)
+                        std::vector<Clause> clauses;
+                        
+                        const auto& phi = *t->operand;
+                        const auto& psi = *t->second_operand;
+
+                        bool phi_true  = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
+                        bool phi_false = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
+                        bool psi_true  = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
+                        bool psi_false = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
+                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
+
+                        if (psi_false) {
+                           __addFalseTransition(state->name);
+                            break;
+                        }
+                        if (psi_true && phi_true) {
+                            __addTrueTransition(state->name);
+                            break;
+                        }
+
+                        // (ψ ∧ φ)
+                        if (!psi_false && !phi_false) {
+                            Clause conj1;
+                            if (!psi_true) {
+                                
+                                std::string_view s_psi = getStateOfFormula(psi);
+                                conj1.literals.push_back({ -1, s_psi });
+                            }
+                            if (!phi_true) {
+                                
+                                std::string_view s_phi = getStateOfFormula(phi);
+                                conj1.literals.push_back({ -1, s_phi });
+                            }
+                            clauses.push_back(std::move(conj1));
+                        }
+
+                        // (ψ ∧ EX self)
+                        if (!psi_false) {
+                            if (psi_true) {
+                                clauses.push_back(Clause{ { { L, state->name } } });
+                                clauses.push_back(Clause{ { { R, state->name } } });
+                            } else {
+                                std::string_view s_psi = getStateOfFormula(psi);
+                                clauses.push_back(Clause{ { { -1, s_psi }, { L, state->name } } });
+                                clauses.push_back(Clause{ { { -1, s_psi }, { R, state->name } } });
+                            }
+                        }
+
+                        if (clauses.empty())
+                           __addFalseTransition(state->name);
+                        else
+                            __addTrueTransition(state->name, clauses);
+
+                        break;
+                    }
+
+                    default:
+                        throw std::runtime_error("Non-core temporal op in builder: " + state->name + " : " + state->formula->toString());
+                }
+            
+                break;
+              }
+
+            default:
+                throw std::runtime_error("Unhandled node in builder: " + state->name + " of type " + formula_utils::formulaTypeToString(t));
+                break; // continue to the error below
+        }
+
+    }
+  }
 
 
 
@@ -173,577 +714,6 @@ bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) con
                 s_accepting_states_.insert(blocks_->blocks[i].begin(), blocks_->blocks[i].end());
         }
     }
-
-
-  void CTLAutomaton::addEdge(const std::string_view from, const std::string_view to) {
-        state_successors_[from].insert(to);
-        
-    };
-
-    // Record graph edges and store exactly ONE transition (guard + disjuncts).
-  void CTLAutomaton::addDNF(const std::string_view from,
-                             const std::string& guard,
-                             const std::vector<Conj>& disjuncts) {
-      // Record edges for SCCs
-      std::cout << "Adding DNF for state " << from << " with guard " << guard << " and " << disjuncts.size() << " disjuncts.\n";
-      std::cout << "  Disjuncts:\n";
-      for (const auto& c : disjuncts) {
-          std::cout << "    Conj: ";
-          for (const auto& a : c.atoms) {
-              std::cout << a.qnext << " ";
-          }
-          std::cout << "\n";
-      }
-      auto& succs = state_successors_[from];
-      for (const auto& c : disjuncts) {
-          for (const auto& a : c.atoms) {
-              succs.insert(a.qnext); // ok if duplicates; SCC code can tolerate or you can dedup
-          }
-      }
-      // Single transition object for the whole DNF clause
-      CTLTransitionPtr t = std::make_shared<CTLTransition>();
-      t->guard     = std::string(guard);
-      t->disjuncts = disjuncts;
-      t->from      = from;
-      m_transitions_[from].push_back(std::move(t));
-  };
-
-
-
-  void CTLAutomaton::__handleStatesAndTransitions(bool symbolic)
-  {
-    for (auto state : v_states_) {
-        FormulaType t = state->formula->getType();
-        
-        
-        switch (t) {
-            case FormulaType::BOOLEAN_LITERAL: {
-                auto b = std::dynamic_pointer_cast<BooleanLiteral>(state->formula);
-                if (b->value) {
-                    // δ(q) := true   (disjuncts may be empty; treat as one empty conj under guard=true)
-                    addDNF(state->name, GTrue, { Conj{ { /* empty */ } } });
-                } else {
-                    // false: no satisfiable transition, or guard=false
-                    addDNF(state->name, GFalse, {}); // harmless; existsSatisfyingTransition will skip
-                }
-                break;
-            }
-            case FormulaType::ATOMIC: 
-            {
-                auto a = std::dynamic_pointer_cast<AtomicFormula>(state->formula);
-                // δ(q) := proposition as guard, with no spawned copies
-                //std::string g = __handleProp(a->proposition, symbolic);
-                std::cout << "Handling atomic proposition for state " << state->name << ": " << a->proposition << "\n";
-                bool sat = __isSatisfiable(a->proposition);
-                if (!sat){
-                    addDNF(state->name, "false", { Conj{ {} } });
-                    //// we also need to change the state to "false"
-                    //for (auto& s : v_states_) {
-                    //    if (s->name == state->name) {
-                    //        s->formula = std::make_shared<BooleanLiteral>(false);
-                    //        break;
-                    //    }
-                    //}
-                } //
-                else addDNF(state->name, a->proposition, { Conj{ {} } });
-                break;
-            }
-            case FormulaType::NEGATION: 
-              {
-                  auto n = std::dynamic_pointer_cast<NegationFormula>(state->formula);
-                  if (auto atom = std::dynamic_pointer_cast<AtomicFormula>(n->operand)) {
-                      //std::string g = __handleProp("!" + atom->proposition, symbolic);
-                      bool sat = __isSatisfiable("!" + atom->proposition);
-                      //if (g == "false") m_rejecting_states_.insert(s);
-                      //if (g != "false")  
-                      //addDNF(state->name, g, { Conj{ {} } });
-                      if (!sat){
-                            addDNF(state->name, "false", { Conj{ {} } });
-                            // we also need to change the state to "false"
-                            //for (auto& s : v_states_) {
-                            //    if (s->name == state->name) {
-                            //        s->formula = std::make_shared<BooleanLiteral>(false);
-                            //        break;
-                            //    }
-                            //}
-
-                        } else {
-                            addDNF(state->name, "!" + atom->proposition, { Conj{ {} } });
-                        }
-                      break;
-                  }
-                  // Handle other negations if needed
-                  throw std::runtime_error("Unhandled negation formula in builder: " + state->name + " : " + state->formula->toString());
-                  break;
-              }
-
-            case FormulaType::BINARY: 
-              {
-                auto bin =  std::dynamic_pointer_cast<BinaryFormula>(state->formula);
-                switch (bin->operator_) {
-                    case BinaryOperator::AND: {
-                        auto leftType  = bin->left->getType();
-                        auto rightType = bin->right->getType();
-
-                        // true/false simplifications
-                        if (leftType == FormulaType::BOOLEAN_LITERAL) {
-                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->left);
-                            if (!b->value) {
-                                // left = false → whole conj = false
-                                addDNF(state->name, GFalse, {}); 
-                                break;
-                            } // if true → skip left, use right only
-                        }
-
-                        if (rightType == FormulaType::BOOLEAN_LITERAL) {
-                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->right);
-                            if (!b->value) {
-                                addDNF(state->name, GFalse, {});
-                                break;
-                            }
-                        }
-
-                        // If either side is 'true', drop it (q ∧ true = q)
-                        std::string_view s_left, s_right;
-                        if (!(leftType == FormulaType::BOOLEAN_LITERAL &&
-                            std::dynamic_pointer_cast<BooleanLiteral>(bin->left)->value)) {
-                            s_left = getStateOfFormula(*bin->left);
-                        }
-                        if (!(rightType == FormulaType::BOOLEAN_LITERAL &&
-                            std::dynamic_pointer_cast<BooleanLiteral>(bin->right)->value)) {
-                            s_right = getStateOfFormula(*bin->right);
-                        }
-
-                        // If both sides reduced away (true ∧ true)
-                        if (s_left.empty() && s_right.empty()) {
-                            addDNF(state->name, GTrue, { Conj{ {} } }); // δ = true
-                        } else if (s_left.empty()) {
-                            // only right remains: φ ∧ true = φ
-                            // get the disjuncts from right only
-                            //auto right_conj = m_transitions_.find(s_right);
-                            //if (right_conj != m_transitions_.end()) {
-                            //    for (const auto& t : right_conj->second) {
-                            //        addDNF(state->name, t->guard, t->disjuncts);
-                            //    }
-                            //}
-                            addDNF(state->name, GTrue, { Conj{ { { -1, s_right } } } });
-                        } else if (s_right.empty()) {
-                            addDNF(state->name, GTrue, { Conj{ { { -1, s_left } } } });
-                            // only left remains: true ∧ φ = φ
-                            //auto left_conj = m_transitions_.find(s_left);
-                            //if (left_conj != m_transitions_.end()) {
-                            //    for (const auto& t : left_conj->second) {
-                            //        addDNF(state->name, t->guard, t->disjuncts);
-                            //    }
-                            //}
-
-                        } else {
-                            // normal case: φ ∧ ψ
-                            addDNF(state->name, GTrue,
-                                { Conj{ { { -1, s_left }, { -1, s_right } } } });
-                            // DNF of (A ∧ B) is the pairwise combination of clauses from DNF(A) and DNF(B).
-                            // This is the most complex part of the conversion.
-                            // auto left_conj = m_transitions_.find(s_left);
-                            //    auto right_conj = m_transitions_.find(s_right);
-                            //for (const auto& conj_left : left_conj->second) {
-                            //    for (const auto& conj_right : right_conj->second) {
-                            //        // Combine guards (AND)
-                            //        std::string combined_guard;
-                            //        if (conj_left->guard == GFalse || conj_right->guard == GFalse) {
-                            //            combined_guard = GFalse;
-                            //        } else if (conj_left->guard == GTrue) {
-                            //            combined_guard = conj_right->guard;
-                            //        } else if (conj_right->guard == GTrue) {
-                            //            combined_guard = conj_left->guard;
-                            //        } else {
-                            //            combined_guard = "(" + conj_left->guard + ") & (" + conj_right->guard + ")";
-                            //        }
-//
-                            //        // Combine disjuncts (cross product)
-                            //        std::vector<Conj> combined_disjuncts;
-                            //        for (const auto& d_left : conj_left->disjuncts) {
-                            //            for (const auto& d_right : conj_right->disjuncts) {
-                            //                Conj combined_conj;
-                            //                combined_conj.atoms.insert(combined_conj.atoms.end(),
-                            //                    d_left.atoms.begin(), d_left.atoms.end());
-                            //                combined_conj.atoms.insert(combined_conj.atoms.end(),
-                            //                    d_right.atoms.begin(), d_right.atoms.end());
-                            //                combined_disjuncts.push_back(std::move(combined_conj));
-                            //            }
-                            //        }
-//
-                            //        addDNF(state->name, combined_guard, combined_disjuncts);
-                            //    }
-                            //}
-                        }//
-                        break;
-                    }
-
-
-                    case BinaryOperator::OR: {
-                        auto leftType  = bin->left->getType();
-                        auto rightType = bin->right->getType();
-
-                        // false/true simplifications
-                        if (leftType == FormulaType::BOOLEAN_LITERAL) {
-                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->left);
-                            if (b->value) {
-                                // true ∨ x = true
-                                addDNF(state->name, GTrue, { Conj{ {} } });
-                                break;
-                            } // if false → skip left
-                        }
-
-                        if (rightType == FormulaType::BOOLEAN_LITERAL) {
-                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(bin->right);
-                            if (b->value) {
-                                addDNF(state->name, GTrue, { Conj{ {} } });
-                                break;
-                            }
-                        }
-
-                        // If either side is 'false', drop it (q ∨ false = q)
-                        std::vector<Conj> disjuncts;
-                        if (!(leftType == FormulaType::BOOLEAN_LITERAL &&
-                            !std::dynamic_pointer_cast<BooleanLiteral>(bin->left)->value)) {
-                            std::string_view s_left = getStateOfFormula(*bin->left);
-                            disjuncts.push_back(Conj{ { { -1, s_left } } });
-                        }
-                        if (!(rightType == FormulaType::BOOLEAN_LITERAL &&
-                            !std::dynamic_pointer_cast<BooleanLiteral>(bin->right)->value)) {
-                            std::string_view s_right = getStateOfFormula(*bin->right);
-                            disjuncts.push_back(Conj{ { { -1, s_right } } });
-                        }
-
-                        if (disjuncts.empty()) {
-                            // both sides false → δ = false
-                            addDNF(state->name, GFalse, {});
-                        } else {
-                            addDNF(state->name, GTrue, disjuncts);
-                        }
-                        break;
-                    }
-
-                    default:
-                        throw std::runtime_error("Unsupported binary operator in builder");
-                }
-    
-              }
-              break;
-              // Temporal core
-            case FormulaType::TEMPORAL: 
-              {
-                using Op = TemporalOperator;
-                auto t = std::dynamic_pointer_cast<TemporalFormula>(state->formula);
-                switch (t->operator_) {
-                    // AX φ  :  ∧_{c∈{L,R}} next(c, φ)
-                    case Op::AX: {
-                        if (t->operand->getType() == FormulaType::BOOLEAN_LITERAL) {
-                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(t->operand);
-                            if (!b->value) {
-                                // AX false = false
-                                addDNF(state->name, GFalse, {});
-                                break;
-                            } else {
-                                // AX true = true
-                                addDNF(state->name, GTrue, { Conj{ {} } });
-                                break;
-                            }
-                        }
-                        std::string_view sub = getStateOfFormula(*t->operand);
-                        addDNF(state->name, GTrue, { Conj{ { { L, sub }, { R, sub } } } });
-                        break;
-                    }
-                    // EX φ  :  ∨_{c∈{L,R}} next(c, φ)
-                    case Op::EX: {
-                        if (t->operand->getType() == FormulaType::BOOLEAN_LITERAL) {
-                            auto b = std::dynamic_pointer_cast<BooleanLiteral>(t->operand);
-                            if (!b->value) {
-                                // AX false = false
-                                addDNF(state->name, GFalse, {});
-                                break;
-                            } else {
-                                // AX true = true
-                                addDNF(state->name, GTrue, { Conj{ {} } });
-                                break;
-                            }
-                        }
-                        std::string_view sub = getStateOfFormula(*t->operand);
-                        addDNF(state->name, GTrue, { Conj{ { { L, sub } } }, Conj{ { { R, sub } } } });
-                        break;
-                    }
-                    // A(φ U ψ) : ψ  ∨  (φ ∧ AX self)
-                    case Op::AU: {
-                        std::vector<Conj> disjuncts;
-
-                        const auto& phi = *t->operand;
-                        const auto& psi = *t->second_operand;
-
-                        bool phi_true  = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
-                        bool phi_false = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
-                        bool psi_true  = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
-                        bool psi_false = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
-
-                        // Simplify trivial cases
-                        if (psi_true) {
-                            // A(φ U true) = true
-                            addDNF(state->name, GTrue, { Conj{ {} } });
-                            break;
-                        }
-                        if (psi_false && phi_false) {
-                            // A(false U false) = false
-                            addDNF(state->name, GFalse, {});
-                            break;
-                        }
-                        if (phi_false && !psi_false) {
-                            // A(false U ψ) = ψ
-                            std::string_view s_psi = getStateOfFormula(psi);
-                            disjuncts.push_back(Conj{ { { -1, s_psi } } });
-                            addDNF(state->name, GTrue, disjuncts);
-                            break;
-                        }
-                        if (psi_false && !phi_false) {
-                            // A(φ U false) = false
-                            addDNF(state->name, GFalse, {});
-                            break;
-                        }
-
-                        // (1) Immediate satisfaction: ψ
-                        if (!psi_false) {
-                            std::string_view s_psi = getStateOfFormula(psi);
-                            disjuncts.push_back(Conj{ { { -1, s_psi } } });
-                        }
-
-                        // (2) Continue case: φ ∧ AX self  (universal next)
-                        if (!phi_false) {
-                            Conj cont;
-                            if (!phi_true) {
-                                std::string_view s_phi = getStateOfFormula(phi);
-                                cont.atoms.push_back({ -1, s_phi });
-                            }
-                            // universal next: both branches must satisfy A(φ U ψ)
-                            cont.atoms.push_back({ L, state->name });
-                            cont.atoms.push_back({ R, state->name });
-                            disjuncts.push_back(std::move(cont));
-                        }
-
-                        if (disjuncts.empty())
-                            addDNF(state->name, GFalse, {});
-                        else
-                            addDNF(state->name, GTrue, disjuncts);
-                        break;
-                    }
-
-                    // E(φ U ψ) : ψ  ∨  (φ ∧ EX self)  = ψ  ∨  (φ ∧ next(L,self)) ∨ (φ ∧ next(R,self))
-                    case Op::EU: {
-                        std::vector<Conj> disjuncts;
-
-                        const auto& phi = *t->operand;
-                        const auto& psi = *t->second_operand;
-
-                        bool phi_true  = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
-                        bool phi_false = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
-                        bool psi_true  = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
-                        bool psi_false = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
-                        
-
-                        std::cout << "Handling E(φ U ψ) for state " << state->name << " with φ=" << phi.toString() << " and ψ=" << psi.toString() << "\n";
-                        // Simplify special cases
-                        if (psi_true) {  // E(φ U true) = true
-                            addDNF(state->name, GTrue, { Conj{ {} } });
-                            break;
-                        }
-                        if (psi_false && phi_false) {  // E(false U false) = false
-                            addDNF(state->name, GFalse, {});
-                            break;
-                        }
-
-                        if (phi_false && !psi_false) {
-                            // E(false U ψ) = ψ
-                            std::string_view s_psi = getStateOfFormula(psi);
-                            disjuncts.push_back(Conj{ { { -1, s_psi } } });
-                            addDNF(state->name, GTrue, disjuncts);
-                            break;
-                        }
-
-                        if(psi_false){
-                            // E(φ U false) = false
-                            addDNF(state->name, GFalse, {});
-                            break;
-                        }
-
-                        // (1) Immediate satisfaction: ψ
-                        if (!psi_false) {
-                            std::string_view s_psi = getStateOfFormula(psi);
-                            disjuncts.push_back(Conj{ { { -1, s_psi } } });
-                        }
-
-                        // (2) Continuation: φ ∧ EX self
-                        if (!phi_false) {
-                            if (phi_true) {
-                                // true ∧ EX self = EX self
-                                disjuncts.push_back(Conj{ { { L, state->name } } });
-                                disjuncts.push_back(Conj{ { { R, state->name } } });
-                            } else {
-                                std::string_view s_phi = getStateOfFormula(phi);
-                                disjuncts.push_back(Conj{ { { -1, s_phi }, { L, state->name } } });
-                                disjuncts.push_back(Conj{ { { -1, s_phi }, { R, state->name } } });
-                            }
-                        }
-
-                        if (disjuncts.empty())
-                            addDNF(state->name, GFalse, {});
-                        else
-                            addDNF(state->name, GTrue, disjuncts);
-                        break;
-                    }
-
-                    case Op::AU_TILDE: {
-                        // A(φ Ũ ψ) = ψ ∧ (φ ∨ AX self)
-                        std::vector<Conj> disjuncts;
-
-                        const auto& phi = *t->operand;
-                        const auto& psi = *t->second_operand;
-
-                        bool phi_true  = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
-                        bool phi_false = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
-                        bool psi_true  = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
-                        bool psi_false = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
-
-                        if (psi_false) {
-                            // ψ must hold now; if false, unsatisfiable
-                            addDNF(state->name, GFalse, {});
-                            break;
-                        }
-                        if (psi_true && phi_true) {
-                            // ψ ∧ φ = true, so A(true Ũ true) = true
-                            addDNF(state->name, GTrue, { Conj{ {} } });
-                            break;
-                        }
-
-                        // (ψ ∧ φ)
-                        if (!psi_false && !phi_false) {
-                            Conj conj1;
-                            if (!psi_true) {
-                                std::string_view s_psi = getStateOfFormula(psi);
-                                conj1.atoms.push_back({ -1, s_psi });
-                            }
-                            if (!phi_true) {
-                                std::string_view s_phi = getStateOfFormula(phi);
-                                conj1.atoms.push_back({ -1, s_phi });
-                            }
-                            disjuncts.push_back(std::move(conj1));
-                        }
-
-                        // (ψ ∧ AX self)
-                        if (!psi_false) {
-                            Conj conj2;
-                            if (!psi_true) {
-                                std::string_view s_psi = getStateOfFormula(psi);
-                                conj2.atoms.push_back({ -1, s_psi });
-                            }
-                            conj2.atoms.push_back({ L, state->name });
-                            conj2.atoms.push_back({ R, state->name });
-                            disjuncts.push_back(std::move(conj2));
-                        }
-
-                        if (disjuncts.empty())
-                            addDNF(state->name, GFalse, {});
-                        else
-                            addDNF(state->name, GTrue, disjuncts);
-
-                        break;
-                    }
-
-                    // E(φ Ũ ψ) : ψ ∧ (φ ∨ EX self) = (ψ ∧ φ) ∨ (ψ ∧ next(L,self)) ∨ (ψ ∧ next(R,self))
-                    case Op::EU_TILDE: {
-                        // E(φ Ũ ψ) = ψ ∧ (φ ∨ EX self)
-                        std::vector<Conj> disjuncts;
-                        
-                        const auto& phi = *t->operand;
-                        const auto& psi = *t->second_operand;
-
-                        bool phi_true  = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
-                        bool phi_false = (phi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->operand)->value);
-                        bool psi_true  = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
-                        bool psi_false = (psi.getType() == FormulaType::BOOLEAN_LITERAL &&
-                                        !std::dynamic_pointer_cast<BooleanLiteral>(t->second_operand)->value);
-
-                        if (psi_false) {
-                            addDNF(state->name, GFalse, {});
-                            break;
-                        }
-                        if (psi_true && phi_true) {
-                            addDNF(state->name, GTrue, { Conj{ {} } });
-                            break;
-                        }
-
-                        // (ψ ∧ φ)
-                        if (!psi_false && !phi_false) {
-                            Conj conj1;
-                            if (!psi_true) {
-                                
-                                std::string_view s_psi = getStateOfFormula(psi);
-                                conj1.atoms.push_back({ -1, s_psi });
-                            }
-                            if (!phi_true) {
-                                
-                                std::string_view s_phi = getStateOfFormula(phi);
-                                conj1.atoms.push_back({ -1, s_phi });
-                            }
-                            disjuncts.push_back(std::move(conj1));
-                        }
-
-                        // (ψ ∧ EX self)
-                        if (!psi_false) {
-                            if (psi_true) {
-                                disjuncts.push_back(Conj{ { { L, state->name } } });
-                                disjuncts.push_back(Conj{ { { R, state->name } } });
-                            } else {
-                                std::string_view s_psi = getStateOfFormula(psi);
-                                disjuncts.push_back(Conj{ { { -1, s_psi }, { L, state->name } } });
-                                disjuncts.push_back(Conj{ { { -1, s_psi }, { R, state->name } } });
-                            }
-                        }
-
-                        if (disjuncts.empty())
-                            addDNF(state->name, GFalse, {});
-                        else
-                            addDNF(state->name, GTrue, disjuncts);
-
-                        break;
-                    }
-
-                    default:
-                        throw std::runtime_error("Non-core temporal op in builder: " + state->name + " : " + state->formula->toString());
-                }
-            
-                break;
-              }
-
-            default:
-                throw std::runtime_error("Unhandled node in builder: " + state->name + " of type " + formula_utils::formulaTypeToString(t));
-                break; // continue to the error below
-        }
-
-    }
-  }
-
 
 
 
@@ -812,473 +782,6 @@ bool CTLAutomaton::__isSatisfiable(const std::unordered_set<std::string>& g) con
 
 
 
-    // Convert C++ transitions to Python-style DNF format
-    std::vector<Move> CTLAutomaton::transitionToDNF(const std::vector<CTLTransitionPtr>& transitions, bool with_atom_collection) const {
-        std::vector<Move> dnf_moves;
-        
-        for (const auto& transition : transitions) {
-            // Skip transitions with false guard
-            //if (transition->guard == "false") {
-            //    continue;
-            //}
-            
-            // Each disjunct becomes a separate move
-            for (const auto& conj : transition->disjuncts) {
-                Move move;
-                
-                // Add the guard as an atomic proposition if it's not "true"
-                if (transition->guard != "true" && !transition->guard.empty()) {
-                    move.atoms.insert(transition->guard);
-                }
-                
-                // Process atoms from the conjunction
-                for (const auto& atom : conj.atoms) {
-                    
-                        // Directions 0/1 (L/R) are temporal requirements (next state moves)
-                        move.next_states.insert({atom.dir, atom.qnext});
-                    
-                }
-                
-                dnf_moves.push_back(std::move(move));
-            }
-        }
-        
-
-        return dnf_moves;
-    }
     
-    
-
-    
-    std::vector<Move> CTLAutomaton::__getMovesInternal(const std::string_view state_name,
-        std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves) const {
-        // Check if already memoized
-        auto memo_it = state_to_moves.find(state_name);
-        if (memo_it != state_to_moves.end()) {
-            return memo_it->second;
-        }
-        // Get raw transitions for this state
-        auto it = m_transitions_.find(state_name);
-        if (it == m_transitions_.end() || it->second.empty()) {
-            state_to_moves[state_name] = {};
-            return {};
-        }
-        // Convert raw transitions to base DNF moves
-        auto base_moves = transitionToDNF(it->second);
-        std::vector<Move> fully_expanded_moves;
-        for (const auto& base_move : base_moves) {
-            // Recursively expand each base move (since transitions are already DNF, each expands to one move)
-            expandMoveRevisited(base_move, state_name, state_to_moves, &fully_expanded_moves);
-            
-        }
-        
-        
-        std::unordered_set<Move> seen_moves;
-        std::vector<Move> unique_moves;
-        
-        for (const auto& move : fully_expanded_moves) {
-            if (seen_moves.find(move) == seen_moves.end()) {
-                seen_moves.insert(move);
-                unique_moves.push_back(move);
-            }
-        }
-        
-        state_to_moves[state_name] = unique_moves;
-        return unique_moves;
-    }
-
-
-
-
-    
-    void CTLAutomaton::expandMoveRevisited(const Move& move, 
-                                   const std::string_view current_state,
-                                   std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
-                                   std::vector<Move>* fully_expanded_moves) const 
-    {
-        // Gather expansion options for each referenced next state
-        std::vector<std::vector<Move>> expansion_options;
-        
-        for (const auto& pair : move.next_states) {
-            const int dir = pair.dir;
-            const std::string_view next_state = pair.state;
-            
-            std::vector<Move> options_for_this_pair;
-            
-            // Self-reference: stop expansion, keep it as-is
-            if (next_state == current_state) {
-                Move self_move;
-                self_move.atoms = move.atoms;
-                self_move.next_states.insert(pair);
-                options_for_this_pair.push_back(self_move);
-            }
-            // Expand via already memoized state moves
-            else {
-                auto it = state_to_moves.find(next_state);
-                if (it != state_to_moves.end() && !it->second.empty()) {
-                    const auto& next_moves = it->second;
-                    
-                    for (const auto& next_move : next_moves) {
-                        Move expanded;
-                        expanded.atoms = move.atoms; // Start with current atoms
-                        
-                        // Merge atoms from the next move
-                        expanded.atoms.insert(next_move.atoms.begin(), next_move.atoms.end());
-                        
-                        if (next_move.next_states.empty()) {
-                            // Terminal move: no further next states, just atoms
-                            // Don't add any next_states
-                        } else {
-                            // Merge next-states from referenced state
-                            for (const auto& np : next_move.next_states) {
-                                expanded.next_states.insert(np);
-                            }
-                        }
-                        options_for_this_pair.push_back(std::move(expanded));
-                    }
-                } else {
-                    // No info for that state: keep as symbolic reference
-                    Move fallback;
-                    fallback.atoms = move.atoms;
-                    fallback.next_states.insert(pair);
-                    options_for_this_pair.push_back(std::move(fallback));
-                }
-            }
-            
-            expansion_options.push_back(std::move(options_for_this_pair));
-        }
-        
-        // Handle terminal (no next-states)
-        if (expansion_options.empty()) {
-            Move terminal;
-            terminal.atoms = move.atoms;
-            fully_expanded_moves->push_back(std::move(terminal));
-            return;
-        }
-        
-        // Determine expansion type (conjunctive vs disjunctive)
-        // Check if current state represents AND/universal or OR/existential operator
-        bool is_conjunctive = false;
-        
-        // Look up the operator for this state
-        auto op_it = m_state_operator_.find(current_state);
-        if (op_it != m_state_operator_.end()) {
-            // If it's an AND operator, use conjunctive expansion (Cartesian product)
-            is_conjunctive = (op_it->second == BinaryOperator::AND);
-        } else {
-            // For temporal operators, check the formula type
-            auto state_it = std::find_if(v_states_.begin(), v_states_.end(),
-                                        [&](const CTLStatePtr& s) { return s->name == current_state; });
-            if (state_it != v_states_.end()) {
-                const auto& formula = (*state_it)->formula;
-                auto temporal = std::dynamic_pointer_cast<TemporalFormula>(formula);
-                if (temporal) {
-                    // Universal operators (AX, AU, AU~) use conjunctive expansion
-                    is_conjunctive = (temporal->operator_ == TemporalOperator::AX ||
-                                    temporal->operator_ == TemporalOperator::AU ||
-                                    temporal->operator_ == TemporalOperator::AU_TILDE);
-                }
-                // Binary AND also uses conjunctive
-                auto binary = std::dynamic_pointer_cast<BinaryFormula>(formula);
-                if (binary && binary->operator_ == BinaryOperator::AND) {
-                    is_conjunctive = true;
-                }
-            }
-        }
-        
-        Move base_move;
-        base_move.atoms = move.atoms;
-        
-        // Perform expansion based on type
-        if (is_conjunctive) {
-            // ---- Cartesian product (AND) ----
-            // All combinations: one option from each position
-            std::function<void(size_t, Move)> generate = [&](size_t i, Move acc) {
-                if (i == expansion_options.size()) {
-                    fully_expanded_moves->push_back(acc);
-                    return;
-                }
-                for (const auto& opt : expansion_options[i]) {
-                    Move combined = acc;
-                    combined.atoms.insert(opt.atoms.begin(), opt.atoms.end());
-                    combined.next_states.insert(opt.next_states.begin(), opt.next_states.end());
-                    generate(i + 1, std::move(combined));
-                }
-            };
-            generate(0, base_move);
-        } else {
-            // ---- Union (OR) ----
-            // Each option becomes a separate move
-            for (const auto& opts : expansion_options) {
-                for (const auto& opt : opts) {
-                    Move combined = base_move;
-                    combined.atoms.insert(opt.atoms.begin(), opt.atoms.end());
-                    combined.next_states.insert(opt.next_states.begin(), opt.next_states.end());
-                    fully_expanded_moves->push_back(std::move(combined));
-                }
-            }
-        }
-        
-        return;
-    }
-
-
-
-    //std::function<void(size_t, Move)> cross_product = [&](size_t option_index, Move current_combination) {
-    //        if (option_index == expansion_options.size()) {
-    //            // We've chosen one option from each position - this is a complete combination
-    //            fully_expanded_moves->push_back(current_combination);
-    //            return;
-    //        }
-    //        
-    //        // Try each option at the current position
-    //        for (const auto& option : expansion_options[option_index]) {
-    //            Move combined = current_combination;
-    //            
-    //            // Merge atoms from this option
-    //            combined.atoms.insert(option.atoms.begin(), option.atoms.end());
-    //            
-    //            // Merge next_states from this option
-    //            combined.next_states.insert(option.next_states.begin(), option.next_states.end());
-    //            
-    //            // Recurse to next position in expansion_options
-    //            cross_product(option_index + 1, combined);
-    //        }
-    //    };
-
-
-
-
-    // ============================================================================
-    // Optimized filtered versions that check good blocks during expansion
-    // ============================================================================
-    
-    std::vector<Move> CTLAutomaton::__getMovesInternalFiltered(
-        const std::string_view state_name,
-        std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
-        int curBlock,
-        const std::unordered_set<std::string_view>& in_block_ok,
-        const std::vector<std::unordered_set<std::string_view>>& goodStates) const {
-        
-        // Check if already memoized
-        auto memo_it = state_to_moves.find(state_name);
-        if (memo_it != state_to_moves.end()) {
-            return memo_it->second;
-        }
-        
-        // Get raw transitions for this state
-        auto it = m_transitions_.find(state_name);
-        if (it == m_transitions_.end() || it->second.empty()) {
-            state_to_moves[state_name] = {};
-            return {};
-        }
-        
-        // Convert raw transitions to base DNF moves
-        auto base_moves = transitionToDNF(it->second);
-        std::vector<Move> fully_expanded_moves;
-        
-        for (const auto& base_move : base_moves) {
-            // Check if move is potentially satisfiable before expanding
-            //if (!__isSatisfiable(base_move.atoms)) {
-            //    continue;
-            //}
-            
-            // Recursively expand with filtering
-            //expandMoveRevisitedFiltered(base_move, state_name, state_to_moves, 
-            //                           &fully_expanded_moves, curBlock, in_block_ok, goodStates);
-            expandMoveRevisited(base_move, state_name, state_to_moves, &fully_expanded_moves);
-        }
-        
-        // Remove duplicates
-        std::unordered_set<Move> seen_moves;
-        std::vector<Move> unique_moves;
-        
-        for (const auto& move : fully_expanded_moves) {
-            if (seen_moves.find(move) == seen_moves.end()) {
-                seen_moves.insert(move);
-                unique_moves.push_back(move);
-            }
-        }
-        
-        state_to_moves[state_name] = unique_moves;
-        return unique_moves;
-    }
-    
-    
-    void CTLAutomaton::expandMoveRevisitedFiltered(
-        const Move& move,
-        const std::string_view current_state,
-        std::unordered_map<std::string_view, std::vector<Move>>& state_to_moves,
-        std::vector<Move>* fully_expanded_moves,
-        int curBlock,
-        const std::unordered_set<std::string_view>& in_block_ok,
-        const std::vector<std::unordered_set<std::string_view>>& goodStates) const {
-        
-        // Helper to check if a state is in good blocks
-        auto is_state_good = [&](const DirectionStatePair& ns) -> bool {
-            if (ns.dir == -1) {
-                // Local successor - always ok for expansion purposes
-                return true;
-            }
-            
-            int target_block = blocks_->getBlockId(ns.state);
-            
-            if (target_block == curBlock) {
-                // Within same block
-                bool isNu = blocks_->isGreatestFixedPoint(curBlock);
-                if (isNu) {
-                    return in_block_ok.count(ns.state) > 0;
-                } else {
-                    // μ-block: optimistic
-                    return true;
-                }
-            } else {
-                // Different block
-                if (target_block >= 0 && target_block < (int)goodStates.size()) {
-                    return goodStates[target_block].count(ns.state) > 0;
-                }
-                return false;
-            }
-        };
-        
-        // Gather expansion options for each referenced next state
-        std::vector<std::vector<Move>> expansion_options;
-        
-        for (const auto& pair : move.next_states) {
-            // Filter out bad successors early
-            if (!is_state_good(pair)) {
-                // This successor is not in good blocks, skip this entire move
-                return;
-            }
-            
-            const std::string_view next_state = pair.state;
-            std::vector<Move> options_for_this_pair;
-            
-            // Self-reference: stop expansion, keep it as-is
-            if (next_state == current_state) {
-                Move self_move;
-                self_move.atoms = move.atoms;
-                self_move.next_states.insert(pair);
-                options_for_this_pair.push_back(self_move);
-            }
-            // Expand via already memoized state moves
-            else {
-                auto it = state_to_moves.find(next_state);
-                if (it != state_to_moves.end() && !it->second.empty()) {
-                    const auto& next_moves = it->second;
-                    
-                    for (const auto& next_move : next_moves) {
-                        // Check all next_move's successors are good
-                        bool all_good = true;
-                        for (const auto& ns : next_move.next_states) {
-                            if (!is_state_good(ns)) {
-                                all_good = false;
-                                break;
-                            }
-                        }
-                        
-                        if (!all_good) {
-                            continue; // Skip this option
-                        }
-                        
-                        Move expanded;
-                        expanded.atoms = move.atoms;
-                        expanded.atoms.insert(next_move.atoms.begin(), next_move.atoms.end());
-                        
-                        if (!next_move.next_states.empty()) {
-                            for (const auto& np : next_move.next_states) {
-                                expanded.next_states.insert(np);
-                            }
-                        }
-                        options_for_this_pair.push_back(std::move(expanded));
-                    }
-                } else {
-                    // No info for that state: keep as symbolic reference if it's good
-                    Move fallback;
-                    fallback.atoms = move.atoms;
-                    fallback.next_states.insert(pair);
-                    options_for_this_pair.push_back(std::move(fallback));
-                }
-            }
-            
-            if (options_for_this_pair.empty()) {
-                // No valid options for this pair, entire move is invalid
-                return;
-            }
-            
-            expansion_options.push_back(std::move(options_for_this_pair));
-        }
-        
-        // Handle terminal (no next-states)
-        if (expansion_options.empty()) {
-            Move terminal;
-            terminal.atoms = move.atoms;
-            fully_expanded_moves->push_back(std::move(terminal));
-            return;
-        }
-        
-        // Determine expansion type (conjunctive vs disjunctive)
-        bool is_conjunctive = false;
-        
-        auto op_it = m_state_operator_.find(current_state);
-        if (op_it != m_state_operator_.end()) {
-            is_conjunctive = (op_it->second == BinaryOperator::AND);
-        } else {
-            auto state_it = std::find_if(v_states_.begin(), v_states_.end(),
-                                        [&](const CTLStatePtr& s) { return s->name == current_state; });
-            if (state_it != v_states_.end()) {
-                const auto& formula = (*state_it)->formula;
-                auto temporal = std::dynamic_pointer_cast<TemporalFormula>(formula);
-                if (temporal) {
-                    is_conjunctive = (temporal->operator_ == TemporalOperator::AX ||
-                                    temporal->operator_ == TemporalOperator::AU ||
-                                    temporal->operator_ == TemporalOperator::AU_TILDE);
-                }
-                auto binary = std::dynamic_pointer_cast<BinaryFormula>(formula);
-                if (binary && binary->operator_ == BinaryOperator::AND) {
-                    is_conjunctive = true;
-                }
-            }
-        }
-        
-        Move base_move;
-        base_move.atoms = move.atoms;
-        
-        // Perform expansion based on type
-        if (is_conjunctive) {
-            // Cartesian product (AND)
-            std::function<void(size_t, Move)> generate = [&](size_t i, Move acc) {
-                if (i == expansion_options.size()) {
-                    // Final satisfiability check
-                    if (__isSatisfiable(acc.atoms)) {
-                        fully_expanded_moves->push_back(acc);
-                    }
-                    return;
-                }
-                for (const auto& opt : expansion_options[i]) {
-                    Move combined = acc;
-                    combined.atoms.insert(opt.atoms.begin(), opt.atoms.end());
-                    combined.next_states.insert(opt.next_states.begin(), opt.next_states.end());
-                    generate(i + 1, std::move(combined));
-                }
-            };
-            generate(0, base_move);
-        } else {
-            // Union (OR)
-            for (const auto& opts : expansion_options) {
-                for (const auto& opt : opts) {
-                    Move combined = base_move;
-                    combined.atoms.insert(opt.atoms.begin(), opt.atoms.end());
-                    combined.next_states.insert(opt.next_states.begin(), opt.next_states.end());
-                    
-                    // Check satisfiability before adding
-                    if (__isSatisfiable(combined.atoms)) {
-                        fully_expanded_moves->push_back(std::move(combined));
-                    }
-                }
-            }
-        }
-    }
-
 
 }

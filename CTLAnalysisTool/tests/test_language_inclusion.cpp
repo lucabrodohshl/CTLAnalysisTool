@@ -26,7 +26,7 @@ std::shared_ptr<CTLProperty> makeProperty(const std::string& formula_str) {
 // ---------------------------------------------------------------------
 
 TEST(EmptinessTest, Test01_FalseIsEmpty) {
-    auto prop = makeProperty("p & !p");
+    auto prop = makeProperty("--p & !p");
     EXPECT_TRUE(prop->isEmpty());
 }
 

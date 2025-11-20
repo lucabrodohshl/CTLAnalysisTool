@@ -325,24 +325,24 @@ if __name__ == "__main__":
     paper_folder = os.path.join(args.output_dir, "paper_stuff")
     os.makedirs(paper_folder, exist_ok=True)
     # copy the stuff for the paper there
-    shutil.copyfile(f"{output_dir}/benchmark_table_grouped.tex", os.path.join(paper_folder, "benchmark_table_grouped.tex"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/correlation_file_atomic_complexity_vs_reduction_percentage.png", os.path.join(paper_folder, "correlation_file_atomic_complexity_vs_reduction_percentage.png"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/correlation_file_atomic_complexity_vs_reduction_percentage.pgf", os.path.join(paper_folder, "correlation_file_atomic_complexity_vs_reduction_percentage.pgf"))
-
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/correlation_file_formula_size_vs_reduction_percentage.png",
-                    os.path.join(paper_folder, "correlation_file_formula_size_vs_reduction_percentage.png"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/correlation_file_formula_size_vs_reduction_percentage.pgf",
-                    os.path.join(paper_folder, "correlation_file_formula_size_vs_reduction_percentage.pgf"))
-    shutil.copyfile(f"{output_dir}/PNG/average_time_breakdown_per_category.png", os.path.join(paper_folder, "average_time_breakdown_per_category.png"))
-    shutil.copyfile(f"{output_dir}/PGF/average_time_breakdown_per_category.pgf", os.path.join(paper_folder, "average_time_breakdown_per_category.pgf"))
-    shutil.copyfile(f"{output_dir}/PNG/average_memory_and_time_dualaxis.png", os.path.join(paper_folder, "average_memory_and_time_dualaxis.png"))
-    shutil.copyfile(f"{output_dir}/PGF/average_memory_and_time_dualaxis.pgf", os.path.join(paper_folder, "average_memory_and_time_dualaxis.pgf"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/correlation_file_atomic_complexity_vs_total_time.png", os.path.join(paper_folder, "correlation_file_atomic_complexity_vs_total_time.png"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/correlation_file_atomic_complexity_vs_total_time.pgf", os.path.join(paper_folder, "correlation_file_atomic_complexity_vs_total_time.pgf"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/correlation_file_formula_size_vs_total_time.png", os.path.join(paper_folder, "correlation_file_formula_size_vs_total_time.png"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/correlation_file_formula_size_vs_total_time.pgf", os.path.join(paper_folder, "correlation_file_formula_size_vs_total_time.pgf"))
-
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/trajectory_atomic_complexity_time_memory.pgf", os.path.join(paper_folder, "trajectory_atomic_complexity_time_memory.pgf"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/trajectory_atomic_complexity_time_memory.png", os.path.join(paper_folder, "trajectory_atomic_complexity_time_memory.png"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/trajectory_formula_size_time_memory.pgf", os.path.join(paper_folder, "trajectory_formula_size_time_memory.pgf"))
-    shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/trajectory_formula_size_time_memory.png", os.path.join(paper_folder, "trajectory_formula_size_time_memory.png"))
+    #shutil.copyfile(f"{output_dir}/benchmark_table_grouped.tex", os.path.join(paper_folder, "benchmark_table_grouped.tex"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/correlation_file_atomic_complexity_vs_reduction_percentage.png", os.path.join(paper_folder, "correlation_file_atomic_complexity_vs_reduction_percentage.png"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/correlation_file_atomic_complexity_vs_reduction_percentage.pgf", os.path.join(paper_folder, "correlation_file_atomic_complexity_vs_reduction_percentage.pgf"))
+#
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/correlation_file_formula_size_vs_reduction_percentage.png",
+    #                os.path.join(paper_folder, "correlation_file_formula_size_vs_reduction_percentage.png"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/correlation_file_formula_size_vs_reduction_percentage.pgf",
+    #                os.path.join(paper_folder, "correlation_file_formula_size_vs_reduction_percentage.pgf"))
+    #shutil.copyfile(f"{output_dir}/PNG/average_time_breakdown_per_category.png", os.path.join(paper_folder, "average_time_breakdown_per_category.png"))
+    #shutil.copyfile(f"{output_dir}/PGF/average_time_breakdown_per_category.pgf", os.path.join(paper_folder, "average_time_breakdown_per_category.pgf"))
+    #shutil.copyfile(f"{output_dir}/PNG/average_memory_and_time_dualaxis.png", os.path.join(paper_folder, "average_memory_and_time_dualaxis.png"))
+    #shutil.copyfile(f"{output_dir}/PGF/average_memory_and_time_dualaxis.pgf", os.path.join(paper_folder, "average_memory_and_time_dualaxis.pgf"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/correlation_file_atomic_complexity_vs_total_time.png", os.path.join(paper_folder, "correlation_file_atomic_complexity_vs_total_time.png"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/correlation_file_atomic_complexity_vs_total_time.pgf", os.path.join(paper_folder, "correlation_file_atomic_complexity_vs_total_time.pgf"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/correlation_file_formula_size_vs_total_time.png", os.path.join(paper_folder, "correlation_file_formula_size_vs_total_time.png"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/correlation_file_formula_size_vs_total_time.pgf", os.path.join(paper_folder, "correlation_file_formula_size_vs_total_time.pgf"))
+#
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/trajectory_atomic_complexity_time_memory.pgf", os.path.join(paper_folder, "trajectory_atomic_complexity_time_memory.pgf"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/trajectory_atomic_complexity_time_memory.png", os.path.join(paper_folder, "trajectory_atomic_complexity_time_memory.png"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PGF/trajectory_formula_size_time_memory.pgf", os.path.join(paper_folder, "trajectory_formula_size_time_memory.pgf"))
+    #shutil.copyfile(f"{output_dir}/FormulaSizeCorrelationPlots/PNG/trajectory_formula_size_time_memory.png", os.path.join(paper_folder, "trajectory_formula_size_time_memory.png"))

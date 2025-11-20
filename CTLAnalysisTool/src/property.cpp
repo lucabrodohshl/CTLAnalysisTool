@@ -9,9 +9,10 @@ namespace ctl {
 std::unordered_map<std::string, std::shared_ptr<CTLProperty>> CTLProperty::property_cache_;
 
 // Constructor implementations
-CTLProperty::CTLProperty(const std::string& formula_str) {
+CTLProperty::CTLProperty(const std::string& formula_str, bool encode_comparison) {
     try {
         formula_ = Parser::parseFormula(formula_str);
+        if (encode_comparison) formula_ = formula_utils::preprocessFormula(*formula_, true);
     } catch (const ParseException& e) {
         throw std::invalid_argument("Failed to parse formula '" + formula_str + "': " + e.what());
     }
@@ -24,19 +25,23 @@ CTLProperty::CTLProperty(CTLFormulaPtr formula) : formula_(std::move(formula)) {
 }
 
 // Factory methods with caching
-std::shared_ptr<CTLProperty> CTLProperty::create(const std::string& formula_str, bool verbose) {
+std::shared_ptr<CTLProperty> CTLProperty::create(const std::string& formula_str, bool verbose, bool encode_comparison) {
     //auto it = property_cache_.find(formula_str);
     //if (it != property_cache_.end()) {
     //    return it->second;
     //}
-    
-    auto property = std::shared_ptr<CTLProperty>(new CTLProperty(formula_str));
+    std::shared_ptr<CTLProperty> property;
+    if (encode_comparison)
+        property = std::shared_ptr<CTLProperty>(new CTLProperty(formula_str, true));
+    else 
+        property = std::shared_ptr<CTLProperty>(new CTLProperty(formula_str, false));
     property->setVerbose(verbose);
+
     //property_cache_[formula_str] = property;
     return property;
 }
 
-std::shared_ptr<CTLProperty> CTLProperty::create(CTLFormulaPtr formula, bool verbose) {
+std::shared_ptr<CTLProperty> CTLProperty::create(CTLFormulaPtr formula, bool verbose, bool encode_comparison) {
     std::string formula_str = formula->toString();
 
     return create(formula_str, verbose);

@@ -28,12 +28,43 @@ public:
     CVC5SMTInterface(CVC5SMTInterface&&) noexcept = default;
     CVC5SMTInterface& operator=(CVC5SMTInterface&&) noexcept = default;
 
-    bool isSatisfiable(const std::string& formula) const override;
-    bool isSatisfiable(const std::unordered_set<std::string>& formulas) const override;
+    bool isSatisfiable(const std::string& formula, bool without_parsing = false) const override;
+    bool isSatisfiable(const std::unordered_set<std::string>& formulas, bool without_parsing = false) const override;
     
     std::unique_ptr<SMTInterface> clone() const override;
+    std::string simplify(const std::string& formula) const override
+    [
+        // Implement simplification using CVC5
+        cvc5::Term term = parseToCVC5Term(formula);
+        cvc5::Term simplified = solver_->simplify(term);
+        return simplified.toString();
+    
+    ]
 
-private:
+    void* createAndSimplify(const std::string& formula) const override {
+        cvc5::Term term = parseToCVC5Term(formula);
+        cvc5::Term simplified = solver_->simplify(term);
+        return new cvc5::Term(simplified);
+    }
+    bool isSatisfiable(void* formula) const override {
+        if (formula == nullptr) return true; // empty formula is satisfiable
+        cvc5::Term* term = reinterpret_cast<cvc5::Term*>(formula);
+        try {
+            solver_->push();
+            solver_->assertFormula(*term);
+            cvc5::Result result = solver_->checkSat();
+            solver_->pop();
+            return result.isSat();
+        } catch (const std::exception& e) {
+            try {
+                solver_->pop();
+            } catch (...) {
+                // Ignore errors during cleanup
+            }
+            throw std::runtime_error(std::string("CVC5 satisfiability check failed: ") + e.what());
+        }
+    }
+
     /**
      * @brief Parse a string formula into a CVC5 term
      * @param str The formula string

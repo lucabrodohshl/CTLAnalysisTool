@@ -56,12 +56,6 @@ std::string CTLAutomaton::toString() const {
             out += "  (initial)";
         out += "\n";
     }
-    if(v_removed_states_.size()>0){
-        out += "Dead States:\n";
-        for (const auto& s : v_removed_states_) {
-            out += "  " + s->name + ": " + s->formula->toString() + "\n";
-        }
-    }
 
     out += "\nTransitions (δ):\n";
     if (m_transitions_.empty()) {
@@ -73,13 +67,13 @@ std::string CTLAutomaton::toString() const {
         for (const auto& t : tlist) {
             out += "  " + std::string(t->from) + "  --[guard: " + t->guard + "]--> \n";
             int idx = 0;
-            for (const auto& conj : t->disjuncts) {
+            for (const auto& conj : t->clauses) {
                 out += " ( ";
-                if (conj.atoms.empty()) {
+                if (conj.literals.empty()) {
                     out += "(ε) and";
                     continue;
                 }
-                for (const auto& a : conj.atoms) {
+                for (const auto& a : conj.literals) {
                     out += "(" + std::to_string(a.dir) + "," + std::string(a.qnext) + ") and ";
                 }
                 //remove last and
@@ -93,6 +87,14 @@ std::string CTLAutomaton::toString() const {
         
     }
 
+    out += "Accepting States:\n";
+    out += "{";
+    for (const auto& s : s_accepting_states_) {
+        out += " " + std::string(s) + ", ";
+    }
+    if (!s_accepting_states_.empty())
+        out = out.substr(0, out.size() - 2); // remove last comma and space
+    out += "}\n";
     return out;
 }
 
@@ -163,53 +165,6 @@ CTLFormulaPtr CTLAutomaton::getNegatedFormula() const {
 
 
 
-// Expands each transition of the automaton according to the states, starting from the lower states in the topological order
-    std::unordered_map<std::string_view, std::vector<Move>> CTLAutomaton::getMoves() const{
-        auto topo = __getTopologicalOrder();
-        std::reverse(topo.begin(), topo.end());
-        std::unordered_map<std::string_view, std::vector<Move>> state_to_moves;
-        
-        // Pre-allocate space to avoid rehashing
-        state_to_moves.reserve(v_states_.size());
-        
-        for (const auto& block : topo) {
-            for (const auto& state_name : blocks_->getStatesInBlock(block)) {
-                auto moves = __getMovesInternal(state_name, state_to_moves);
-                // No need to store again as __getMovesInternal handles memoization
-            }
-        }
-
-        // After getting the moves, extract atoms from direction -1 transitions
-        // and move them to the atoms field of the moves
-        for (auto& [state_name, moves] : state_to_moves) {
-            for (auto& move : moves) {
-                // Use iterators to avoid unnecessary copies
-                auto it = move.next_states.begin();
-                while (it != move.next_states.end()) {
-                    if (it->dir == -1) {
-                        // This is an atom that should be moved to the atoms field
-                        move.atoms.emplace(it->state);
-                        it = move.next_states.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-            }
-        }
-
-        return state_to_moves;
-    }
-
-    std::unordered_map<std::string_view, std::vector<Move>> CTLAutomaton::getExpandedTransitions() const
-    {
-        if (m_expanded_transitions_.empty())
-        {
-            m_expanded_transitions_ = std::move(getMoves());
-        }
-        
-        return m_expanded_transitions_;
-    }
-
 
 
     std::vector<int>& CTLAutomaton::__getTopologicalOrder() const {
@@ -239,6 +194,18 @@ CTLFormulaPtr CTLAutomaton::getNegatedFormula() const {
 
         topological_order_ = std::move(topo);
         return  topological_order_;
+    }
+
+
+
+
+
+    bool CTLAutomaton::__isSatisfiable(const Guard& g) const {
+        // Use the SMT interface to check satisfiability of the guard
+        if (!smt_interface_) {
+            throw std::runtime_error("SMT interface not initialized");
+        }
+        return smt_interface_->isSatisfiable(g.sat_expr);
     }
 
 
